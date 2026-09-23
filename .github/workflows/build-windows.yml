@@ -1,0 +1,27 @@
+name: Build Windows exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Build executable
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name MiddleFingerDetection --collect-all mediapipe app.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiddleFingerDetection-windows-x64
+          path: dist/MiddleFingerDetection.exe
