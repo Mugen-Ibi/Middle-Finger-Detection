@@ -12,6 +12,39 @@ import mediapipe as mp
 
 WINDOW_NAME = "Gesture Party | Q: quit  SPACE: pause"
 PARTY_SECONDS = 2.8
+CAMERA_BACKENDS = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
+
+
+def open_camera():
+    """Try available Windows cameras/backends and return the first usable feed."""
+    for index in range(4):
+        for backend in CAMERA_BACKENDS:
+            camera = cv2.VideoCapture(index, backend)
+            if camera.isOpened():
+                camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                for _ in range(5):
+                    ok, frame = camera.read()
+                    if ok and frame is not None and frame.size:
+                        # Skip device entries that open successfully but only return a black frame.
+                        if frame.mean() < 2.0 and frame.std() < 1.0:
+                            continue
+                        print(f"Using camera {index} (backend {backend})")
+                        return camera, frame
+            camera.release()
+    return None, None
+
+
+def show_camera_error() -> None:
+    """Show actionable feedback even when the packaged app has no console."""
+    frame = __import__("numpy").zeros((360, 720, 3), dtype="uint8")
+    draw_centered_text(frame, "CAMERA NOT AVAILABLE", 135, 0.9, (80, 100, 255), 2)
+    draw_centered_text(frame, "Close other camera apps and check Camera privacy settings.", 205,
+                       0.42, (255, 255, 255), 1)
+    draw_centered_text(frame, "Press Q or Esc to close", 265, 0.5, (210, 210, 210), 1)
+    cv2.imshow(WINDOW_NAME, frame)
+    while (cv2.waitKey(30) & 0xFF) not in (ord("q"), 27):
+        pass
 
 
 def finger_is_extended(landmarks, tip: int, pip: int, mcp: int) -> bool:
@@ -63,13 +96,14 @@ def add_party_effect(frame, started_at: float) -> None:
 
 
 def main() -> int:
-    camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    if not camera.isOpened():
-        print("カメラを開けませんでした。カメラの接続と Windows のアクセス許可を確認してください。")
+    camera, first_frame = open_camera()
+    if camera is None:
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        show_camera_error()
+        cv2.destroyAllWindows()
         return 1
 
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     hands_api = mp.solutions.hands
     last_gesture_at = 0.0
     party_started_at: float | None = None
@@ -84,8 +118,14 @@ def main() -> int:
     ) as hands:
         while True:
             if not paused:
-                ok, frame = camera.read()
+                if first_frame is not None:
+                    frame = first_frame
+                    first_frame = None
+                    ok = True
+                else:
+                    ok, frame = camera.read()
                 if not ok:
+                    print("Camera stopped returning frames.")
                     break
                 frame = cv2.flip(frame, 1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -113,6 +153,8 @@ def main() -> int:
 
                 cv2.putText(frame, "Show one hand | Q: quit | SPACE: pause", (18, frame.shape[0] - 18),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
+                cv2.putText(frame, f"CAMERA LIVE  {frame.shape[1]}x{frame.shape[0]}", (18, 34),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 240, 120), 2, cv2.LINE_AA)
                 cv2.imshow(WINDOW_NAME, frame)
 
             key = cv2.waitKey(30) & 0xFF
@@ -128,3 +170,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
