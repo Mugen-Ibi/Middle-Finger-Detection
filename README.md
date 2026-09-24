@@ -1,31 +1,94 @@
-# Middle Finger Detection
+# Gesture Party
 
-Windows webcam demo. Detects a middle-finger gesture and adds comic effects. Video is processed locally and is not saved or sent.
+Web カメラの映像から手を認識し、中指を立てるジェスチャーに紙吹雪で反応する Windows 向けローカルアプリです。カメラの選択、映像表示、手の骨格表示、検出の一時停止に対応しています。
 
-## Run
+カメラ映像と認識処理はブラウザー内で完結します。録画・画像保存・映像のアップロード・マイクの取得は行いません。モデルを同梱しているため、導入後はインターネット接続なしで使用できます。
 
-Requires Windows 11, Python 3.11 and a webcam.
+## 必要な環境
+
+| 用途 | 必要なもの |
+| --- | --- |
+| exe 版を使う | Windows 11 x64、Microsoft Edge または Google Chrome、カメラ |
+| ソースから起動する | 上記に加え Python 3.11 または 3.12、Node.js 22、npm |
+| 開発・自動テスト | 上記に加え Git、Playwright が用意する Chromium |
+| exe をビルドする | Windows x64 と `requirements.txt` のビルド依存関係 |
+
+ブラウザーは更新済みの版を使用してください。`getUserMedia`、`requestVideoFrameCallback`、Web Worker、WebAssembly、OffscreenCanvas が必要です。Linux / macOS と Windows ARM64 は配布・検証対象に含めていません。カメラの解像度やフレームレートは機器とブラウザーが決定します。
+
+## 導入方法
+
+### exe 版
+
+1. このリポジトリの **Actions** タブから、成功した **Build Windows exe** の実行を開きます。
+2. **Artifacts** の `MiddleFingerDetection-windows-x64` をダウンロードし、ZIP を展開します。ダウンロードには GitHub へのサインインが必要な場合があります。
+3. 展開した `MiddleFingerDetection.exe` を実行します。Python / Node.js の導入は不要です。
+4. 自動で開いたブラウザーで、カメラを選んで **カメラを開始** を押します。
+5. 初回はブラウザーのカメラアクセスを許可します。機器名がまだ表示されない場合は、許可後に **一覧を更新** して使う機器を選び直します。
+
+内蔵カメラ・USB カメラ・スマートフォンの仮想カメラはそれぞれ別の機器です。使いたい機器を一覧から明示的に選んでください。スマートフォン連携の設定自体は、あらかじめ Windows とスマートフォン側で済ませてください。
+
+exe は未署名です。ダウンロード元がこのリポジトリのビルドであることを確認してください。既定ブラウザーが非対応の場合は、開いたページの URL を Edge / Chrome にコピーして開きます。
+
+### ソースから起動
+
+リポジトリをクローン、または **Code → Download ZIP** で取得し、展開したプロジェクトのルートフォルダーで PowerShell を開きます。Python と Node.js を先にインストールしてください。
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python app.py
+npm.cmd ci
+npm.cmd run prepare:assets
+.\.venv\Scripts\python.exe app.py
 ```
 
-Allow camera access and show one hand to the webcam. Press `Q` or `Esc` to quit, or `Space` to pause.
+Python 3.12 を使う場合は最初の行の `-3.11` を `-3.12` に変更します。Python Launcher の `py` がない環境では、インストール済み Python の `python -m venv .venv` を使ってください。仮想環境の有効化は不要です。
 
-## Build the exe
+`prepare:assets` が認識モデルを取得し、チェックサムを検証します。初回の依存関係・モデルの取得にはネット接続が必要です。Python の起動処理には標準ライブラリしか使用しません。
+
+`Launch-MiddleFingerDetection.cmd` からも起動できます。このスクリプトは `dist` 内の exe を優先します。ソースを編集した内容を確認するときは、上記の `python.exe app.py` を直接実行してください。
+
+## 操作
+
+| 操作 | 動作 |
+| --- | --- |
+| カメラを開始 | 選択したカメラから映像を取得 |
+| 停止 | 映像取得を停止してカメラを解放 |
+| 検出を一時停止 / 再開 | カメラ映像を表示したまま認識のみ切り替え |
+| カメラの選択を変更 | 使用中のカメラを停止。開始ボタンで新しい機器を接続 |
+| 左右反転 / 骨格表示 | 表示のみ変更 |
+| アプリを終了 | カメラとローカルサーバーを終了 |
+
+手全体をカメラに向け、中指だけを伸ばして約0.3秒キープします。親指の位置は問いません。一度ジェスチャーを戻すと再び反応します。画面のカウントはページを再読み込みするとリセットされます。
+
+タブを閉じるとカメラを解放し、ローカルサーバーは通常約5分後に自動終了します。すぐに終了したい場合は **アプリを終了** を使ってください。デモ向けの簡易判定のため、照明、手の隠れ方、撮影角度によって誤判定することがあります。
+
+## テストとビルド
+
+導入済みの環境で、次を実行します。
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --name MiddleFingerDetection --collect-all mediapipe app.py
+npm.cmd test
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+npx.cmd playwright install chromium
+npm.cmd run test:e2e
 ```
 
-The executable is written to `dist\\MiddleFingerDetection.exe`. GitHub Actions also builds a Windows x64 executable and attaches it as a workflow artifact.
+Windows exe の生成:
 
-## Notes
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name MiddleFingerDetection --add-data "web;web" app.py
+```
 
-- Gesture recognition is a simple demo heuristic. Hand orientation, lighting and camera placement affect detection.
-- Windows SmartScreen may warn on first launch because the exe is unsigned.
-- No distribution license is configured.
+生成先は `dist\MiddleFingerDetection.exe` です。モデル・WASM・UI・Python ランタイムを同梱します。ビルド手順と生成物の検証は [開発ガイド](docs/development.md) を参照してください。
+
+## ドキュメント
+
+- [開発・テスト・ビルド](docs/development.md)
+- [構成とデータの流れ](docs/architecture.md)
+- [トラブルシューティング](docs/troubleshooting.md)
+- [プライバシーと公開時の注意](docs/privacy.md)
+- [貢献方法](CONTRIBUTING.md)
+- [変更履歴](CHANGELOG.md)
+- [第三者コンポーネントとライセンス](THIRD_PARTY_NOTICES.md)
+
+本プロジェクト自体の配布ライセンスは未設定です。公開リポジトリであることは、無条件の再配布許諾を意味しません。第三者ライブラリにはそれぞれのライセンスが適用されます。

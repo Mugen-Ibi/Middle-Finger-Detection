@@ -1,173 +1,171 @@
-"""A tiny webcam demo that celebrates a detected middle-finger gesture."""
-
+"""Local-only launcher. Camera capture and inference run inside the browser."""
 from __future__ import annotations
 
-import math
-import random
+import argparse
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import secrets
+import sys
+import threading
 import time
+from urllib.parse import unquote, urlsplit
+import webbrowser
 
-import cv2
-import mediapipe as mp
-
-
-WINDOW_NAME = "Gesture Party | Q: quit  SPACE: pause"
-PARTY_SECONDS = 2.8
-CAMERA_BACKENDS = (cv2.CAP_DSHOW, cv2.CAP_MSMF)
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "web"
+APP_ID = "gesture-party-v2"
 
 
-def open_camera():
-    """Try available Windows cameras/backends and return the first usable feed."""
-    for index in range(4):
-        for backend in CAMERA_BACKENDS:
-            camera = cv2.VideoCapture(index, backend)
-            if camera.isOpened():
-                camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                for _ in range(5):
-                    ok, frame = camera.read()
-                    if ok and frame is not None and frame.size:
-                        # Skip device entries that open successfully but only return a black frame.
-                        if frame.mean() < 2.0 and frame.std() < 1.0:
-                            continue
-                        print(f"Using camera {index} (backend {backend})")
-                        return camera, frame
-            camera.release()
-    return None, None
+class LocalServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address, root=ROOT):
+        self.root = Path(root).resolve()
+        self.token = secrets.token_urlsafe(32)
+        self.last_seen = time.monotonic()
+        super().__init__(address, partial(Handler, directory=str(self.root)))
+
+    @property
+    def origin(self):
+        return f"http://127.0.0.1:{self.server_port}"
 
 
-def show_camera_error() -> None:
-    """Show actionable feedback even when the packaged app has no console."""
-    frame = __import__("numpy").zeros((360, 720, 3), dtype="uint8")
-    draw_centered_text(frame, "CAMERA NOT AVAILABLE", 135, 0.9, (80, 100, 255), 2)
-    draw_centered_text(frame, "Close other camera apps and check Camera privacy settings.", 205,
-                       0.42, (255, 255, 255), 1)
-    draw_centered_text(frame, "Press Q or Esc to close", 265, 0.5, (210, 210, 210), 1)
-    cv2.imshow(WINDOW_NAME, frame)
-    while (cv2.waitKey(30) & 0xFF) not in (ord("q"), 27):
+class Handler(SimpleHTTPRequestHandler):
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map,
+                      ".mjs": "text/javascript", ".js": "text/javascript",
+                      ".wasm": "application/wasm", ".task": "application/octet-stream"}
+
+    def log_message(self, *args):
         pass
 
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+                         "style-src 'self'; img-src 'self' data:; media-src 'self' blob:; "
+                         "connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
-def finger_is_extended(landmarks, tip: int, pip: int, mcp: int) -> bool:
-    """Estimate extension using the finger's distance from its MCP joint."""
-    tip_point = landmarks[tip]
-    pip_point = landmarks[pip]
-    mcp_point = landmarks[mcp]
-    tip_distance = math.hypot(tip_point.x - mcp_point.x, tip_point.y - mcp_point.y)
-    pip_distance = math.hypot(pip_point.x - mcp_point.x, pip_point.y - mcp_point.y)
-    return tip_distance > pip_distance * 1.18
+    def valid_host(self):
+        return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
+
+    def send_json(self, value):
+        body = json.dumps(value).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def static_path(self):
+        path = unquote(urlsplit(self.path).path)
+        if path == "/":
+            path = "/index.html"
+        target = (self.server.root / path.lstrip("/")).resolve()
+        if not target.is_relative_to(self.server.root) or not target.is_file():
+            return None
+        return path
+
+    def do_GET(self):
+        if not self.valid_host():
+            self.send_error(403)
+            return
+        if urlsplit(self.path).path == "/api/session":
+            self.server.last_seen = time.monotonic()
+            self.send_json({"app": APP_ID, "token": self.server.token})
+            return
+        path = self.static_path()
+        if path is None:
+            self.send_error(404)
+            return
+        self.path = path
+        super().do_GET()
+
+    def do_HEAD(self):
+        if not self.valid_host():
+            self.send_error(403)
+            return
+        path = self.static_path()
+        if path is None:
+            self.send_error(404)
+            return
+        self.path = path
+        super().do_HEAD()
+
+    def do_POST(self):
+        if (not self.valid_host() or self.headers.get("Origin") != self.server.origin
+                or self.headers.get("X-Session-Token") != self.server.token):
+            self.send_error(403)
+            return
+        if self.path not in ("/api/heartbeat", "/api/quit"):
+            self.send_error(404)
+            return
+        self.server.last_seen = time.monotonic()
+        self.send_json({"ok": True})
+        if self.path == "/api/quit":
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
 
 
-def is_middle_finger(landmarks) -> bool:
-    """Recognize a raised middle finger with the other three fingers curled."""
-    middle_up = finger_is_extended(landmarks, 12, 10, 9)
-    index_up = finger_is_extended(landmarks, 8, 6, 5)
-    ring_up = finger_is_extended(landmarks, 16, 14, 13)
-    pinky_up = finger_is_extended(landmarks, 20, 18, 17)
-    return middle_up and not index_up and not ring_up and not pinky_up
+def required_assets(root=ROOT):
+    return [root / "index.html", root / "vendor/vision_bundle.mjs",
+            root / "vendor/wasm/vision_wasm_internal.wasm",
+            root / "models/hand_landmarker.task"]
 
 
-def draw_centered_text(frame, text: str, y: int, scale: float, color, thickness: int) -> None:
-    font = cv2.FONT_HERSHEY_DUPLEX
-    (width, height), _ = cv2.getTextSize(text, font, scale, thickness)
-    x = max(8, (frame.shape[1] - width) // 2)
-    cv2.putText(frame, text, (x, y), font, scale, (20, 20, 30), thickness + 5, cv2.LINE_AA)
-    cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+def run(port=8765, open_browser=True, idle_seconds=300):
+    missing = [str(p) for p in required_assets() if not p.is_file()]
+    if missing:
+        raise RuntimeError("実行ファイルが不足しています。npm ci と npm run prepare:assets を実行してください。\n"
+                           + "\n".join(missing))
+    try:
+        server = LocalServer(("127.0.0.1", port))
+    except OSError:
+        if port == 0:
+            raise
+        server = LocalServer(("127.0.0.1", 0))
 
+    finished = threading.Event()
 
-def add_party_effect(frame, started_at: float) -> None:
-    elapsed = time.monotonic() - started_at
-    height, width = frame.shape[:2]
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (width, height), (175, 45, 220), -1)
-    strength = max(0.0, 0.15 * (1.0 - elapsed / PARTY_SECONDS))
-    cv2.addWeighted(overlay, strength, frame, 1.0 - strength, 0, frame)
+    def idle_shutdown():
+        while not finished.wait(5):
+            if idle_seconds and time.monotonic() - server.last_seen > idle_seconds:
+                server.shutdown()
+                return
 
-    rng = random.Random(int(started_at * 1000))
-    for _ in range(42):
-        x = rng.randrange(12, max(13, width - 12))
-        y = (rng.randrange(height) + int(elapsed * rng.randrange(100, 320))) % height
-        color = rng.choice(((40, 230, 255), (255, 110, 55), (90, 255, 120), (255, 255, 255)))
-        cv2.circle(frame, (x, y), rng.randrange(3, 8), color, -1, cv2.LINE_AA)
-
-    draw_centered_text(frame, "OH! YOU DID IT!", max(72, height // 5), 1.35, (80, 245, 255), 3)
-    draw_centered_text(frame, "ABSOLUTE LEGEND", max(125, height // 5 + 55), 0.8, (255, 255, 255), 2)
-    cv2.putText(frame, "* dramatic airhorn *", (22, height - 28), cv2.FONT_HERSHEY_SIMPLEX,
-                0.62, (255, 255, 255), 2, cv2.LINE_AA)
-
-
-def main() -> int:
-    camera, first_frame = open_camera()
-    if camera is None:
-        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-        show_camera_error()
-        cv2.destroyAllWindows()
-        return 1
-
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    hands_api = mp.solutions.hands
-    last_gesture_at = 0.0
-    party_started_at: float | None = None
-    paused = False
-
-    with hands_api.Hands(
-        static_image_mode=False,
-        max_num_hands=1,
-        model_complexity=0,
-        min_detection_confidence=0.65,
-        min_tracking_confidence=0.55,
-    ) as hands:
-        while True:
-            if not paused:
-                if first_frame is not None:
-                    frame = first_frame
-                    first_frame = None
-                    ok = True
-                else:
-                    ok, frame = camera.read()
-                if not ok:
-                    print("Camera stopped returning frames.")
-                    break
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                result = hands.process(rgb)
-
-                detected = False
-                if result.multi_hand_landmarks:
-                    hand = result.multi_hand_landmarks[0]
-                    mp.solutions.drawing_utils.draw_landmarks(
-                        frame, hand, hands_api.HAND_CONNECTIONS,
-                        mp.solutions.drawing_utils.DrawingSpec(color=(80, 240, 120), thickness=2, circle_radius=3),
-                        mp.solutions.drawing_utils.DrawingSpec(color=(255, 190, 60), thickness=2),
-                    )
-                    detected = is_middle_finger(hand.landmark)
-
-                now = time.monotonic()
-                if detected and now - last_gesture_at > 1.1:
-                    party_started_at = now
-                    last_gesture_at = now
-
-                if party_started_at is not None and now - party_started_at < PARTY_SECONDS:
-                    add_party_effect(frame, party_started_at)
-                elif detected:
-                    draw_centered_text(frame, "GESTURE DETECTED", 70, 0.75, (80, 245, 255), 2)
-
-                cv2.putText(frame, "Show one hand | Q: quit | SPACE: pause", (18, frame.shape[0] - 18),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
-                cv2.putText(frame, f"CAMERA LIVE  {frame.shape[1]}x{frame.shape[0]}", (18, 34),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 240, 120), 2, cv2.LINE_AA)
-                cv2.imshow(WINDOW_NAME, frame)
-
-            key = cv2.waitKey(30) & 0xFF
-            if key == ord("q") or key == 27:
-                break
-            if key == ord(" "):
-                paused = not paused
-
-    camera.release()
-    cv2.destroyAllWindows()
+    with server:
+        threading.Thread(target=idle_shutdown, daemon=True).start()
+        if open_browser and not webbrowser.open(server.origin):
+            raise RuntimeError(f"ブラウザーを開けません。Edge / Chrome で {server.origin} を開いてください。")
+        if sys.stdout is not None:
+            print(f"Gesture Party: {server.origin}", flush=True)
+        try:
+            server.serve_forever(poll_interval=0.25)
+        finally:
+            finished.set()
     return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--idle-seconds", type=int, default=300)
+    args = parser.parse_args()
+    try:
+        return run(args.port, not args.no_browser, args.idle_seconds)
+    except KeyboardInterrupt:
+        return 0
+    except Exception as error:
+        if sys.stderr is not None:
+            print(str(error), file=sys.stderr)
+        if sys.platform == "win32" and getattr(sys, "frozen", False):
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, str(error), "Gesture Party — 起動エラー", 0x10)
+        return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

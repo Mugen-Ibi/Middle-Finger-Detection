@@ -1,0 +1,11 @@
+Gesture Party includes MediaPipe Tasks Vision 1.0.1 and the MediaPipe Hand
+Landmarker float16 version-1 model, by Google / The MediaPipe Authors.
+
+MediaPipe is distributed under the Apache License, Version 2.0.
+See MEDIAPIPE_LICENSE.txt and https://github.com/google-ai-edge/mediapipe.
+
+Model information:
+https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
+
+The application runs the included model locally. It does not upload camera
+frames, record video, or request microphone access.

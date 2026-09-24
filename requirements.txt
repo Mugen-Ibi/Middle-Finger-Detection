@@ -1,3 +1,3 @@
-mediapipe==0.10.21
-opencv-python==4.11.0.86
+# Running app.py needs only the Python standard library.
+# This dependency is used only to build the Windows launcher.
 pyinstaller==6.13.0

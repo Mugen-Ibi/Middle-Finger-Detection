@@ -2,6 +2,7 @@ name: Build Windows exe
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main]
 
@@ -17,11 +18,32 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install Python build dependencies
         run: python -m pip install -r requirements.txt
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Prepare offline assets
+        run: npm run prepare:assets
+      - name: Install test browser
+        run: npx playwright install chromium
+      - name: Python unit tests
+        run: python -m unittest discover -s tests -v
+      - name: JavaScript unit tests
+        run: npm test
+      - name: Browser integration tests
+        run: npm run test:e2e
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name MiddleFingerDetection --collect-all mediapipe app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name MiddleFingerDetection --add-data "web;web" app.py
+      - name: Test packaged executable
+        run: |
+          $env:LAUNCHER_EXE = (Resolve-Path dist\MiddleFingerDetection.exe).Path
+          npm run test:e2e
       - uses: actions/upload-artifact@v4
         with:
           name: MiddleFingerDetection-windows-x64
           path: dist/MiddleFingerDetection.exe
+          if-no-files-found: error

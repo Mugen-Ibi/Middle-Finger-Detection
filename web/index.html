@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Gesture Party — カメラでジェスチャー検出</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/" aria-label="Gesture Party ホーム"><span class="brand-mark">✳</span> GESTURE PARTY <span class="version">02</span></a>
+      <span class="privacy"><span class="dot"></span> PC 内で処理・録画なし</span>
+    </header>
+    <main>
+      <div class="intro"><div><p class="eyebrow">YOUR HAND. YOUR MOMENT.</p><h1>そのジェスチャーに、<br class="mobile-break">ちょっとした祝福を。</h1><p class="lead">カメラを選んで、手をかざす。それだけ。</p></div><span class="edition">LOCAL CAMERA LAB<br>HAND TRACKING / 02</span></div>
+      <div class="workspace">
+        <section class="preview-panel" aria-label="カメラプレビュー">
+          <div class="panel-heading"><span><span id="live-dot" class="dot off"></span><span id="camera-state">カメラ停止中</span></span><span id="resolution">— × —</span></div>
+          <div class="stage" id="stage">
+            <div class="video-stack mirrored" id="video-stack"><video id="video" autoplay muted playsinline aria-label="選択したカメラの映像"></video><canvas id="landmarks" aria-hidden="true"></canvas></div>
+            <div id="placeholder" class="placeholder"><div class="camera-icon" aria-hidden="true">◉</div><h2>まずは、カメラをつなごう。</h2><p>右側から使うカメラを選び、<br>「カメラを開始」を押してください。</p><span class="placeholder-note">映像はこの PC の外へ送信されません。</span></div>
+            <div id="celebration" class="celebration" hidden><span>GESTURE DETECTED</span><strong>OH! YOU DID IT!</strong><p>本日の主役、決定。</p></div>
+            <canvas id="confetti" aria-hidden="true"></canvas>
+            <div id="image-warning" class="image-warning" role="status" hidden></div>
+          </div>
+          <div class="preview-footer"><span id="active-camera">カメラ未選択</span><span id="fps">— fps</span></div>
+        </section>
+        <aside class="controls" aria-label="カメラと検出の設定">
+          <div class="section-label"><span>01</span> カメラを選ぶ</div>
+          <label for="camera-select">使用するカメラ</label>
+          <select id="camera-select"><option value="">ブラウザーの既定カメラ</option></select>
+          <button id="refresh" class="text-button" type="button">↻ 一覧を更新</button>
+          <p class="helper">初回はブラウザーのカメラ許可が必要です。許可後に機器名が表示されます。</p>
+          <button id="start" class="primary" type="button">カメラを開始 <span aria-hidden="true">↗</span></button>
+          <div class="button-pair"><button id="stop" type="button" disabled>停止</button><button id="pause" type="button" disabled>検出を一時停止</button></div>
+          <div id="message" class="message" role="status" aria-live="polite">開始すると、選択したカメラの映像を表示します。</div>
+          <hr>
+          <div class="section-label"><span>02</span> 検出の状態</div>
+          <div class="status-row"><span>認識モデル</span><strong id="model-state">準備中</strong></div>
+          <div class="status-row"><span>手の検出</span><strong id="hand-state">待機中</strong></div>
+          <div class="status-row"><span>ジェスチャー</span><strong id="gesture-state">待機中</strong></div>
+          <button id="retry-model" class="text-button" type="button" hidden>認識モデルを再読み込み</button>
+          <hr>
+          <label class="toggle"><input id="mirror" type="checkbox" checked><span>鏡のように左右反転</span></label>
+          <label class="toggle"><input id="show-landmarks" type="checkbox" checked><span>手の骨格を表示</span></label>
+        </aside>
+      </div>
+      <div class="bottom-grid">
+        <section class="how-to"><span class="step-mark">↗</span><div><h2>中指を立てて、少しキープ。</h2><p>他の3本の指を曲げ、手全体をカメラに向けてください。<br>次の祝福は、一度手を戻してから。親指の位置は自由です。</p></div></section>
+        <div class="count-card"><span>祝福カウント</span><strong id="count">00</strong><span>回</span></div>
+      </div>
+      <details><summary>映らないとき・診断情報</summary><p>Windows カメラや会議アプリを閉じ、使用する機器を選び直してください。内蔵カメラとスマートフォンのカメラは別の機器です。スマートフォンを使う場合は、スマートフォン側の接続・カメラ許可も確認してください。</p><p>診断情報にはカメラ名とエラー文が含まれます。公開する前に、個別の機器名やパスを削除してください。</p><pre id="diagnostics">初期化中</pre><button id="copy-diagnostics" class="text-button" type="button">診断情報をコピー</button></details>
+    </main>
+    <footer><span>音声は取得しません。映像・判定結果は保存しません。</span><button id="quit" class="text-button" type="button">アプリを終了 ↗</button></footer>
+  </div>
+</body>
+</html>
