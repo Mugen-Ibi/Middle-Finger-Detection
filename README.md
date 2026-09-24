@@ -19,15 +19,17 @@ Web カメラの映像から手を認識し、中指を立てるジェスチャ�
 
 ### exe 版
 
-1. このリポジトリの **Actions** タブから、成功した **Build Windows exe** の実行を開きます。
-2. **Artifacts** の `MiddleFingerDetection-windows-x64` をダウンロードし、ZIP を展開します。ダウンロードには GitHub へのサインインが必要な場合があります。
-3. 展開した `MiddleFingerDetection.exe` を実行します。Python / Node.js の導入は不要です。
+1. [Releases](https://github.com/Mugen-Ibi/Middle-Finger-Detection/releases) を開き、使用するベータ版のリリースノートを確認します。
+2. **Assets** から `MiddleFingerDetection.exe` をダウンロードします。`Source code` は実行ファイルではありません。
+3. `MiddleFingerDetection.exe` を実行します。インストール、Python / Node.js の導入は不要です。
 4. 自動で開いたブラウザーで、カメラを選んで **カメラを開始** を押します。
 5. 初回はブラウザーのカメラアクセスを許可します。機器名がまだ表示されない場合は、許可後に **一覧を更新** して使う機器を選び直します。
 
 内蔵カメラ・USB カメラ・スマートフォンの仮想カメラはそれぞれ別の機器です。使いたい機器を一覧から明示的に選んでください。スマートフォン連携の設定自体は、あらかじめ Windows とスマートフォン側で済ませてください。
 
 exe は未署名です。ダウンロード元がこのリポジトリのビルドであることを確認してください。既定ブラウザーが非対応の場合は、開いたページの URL を Edge / Chrome にコピーして開きます。
+
+ベータ版には未検証の機器や誤判定などの制限があります。同じリリースの `SHA256SUMS.txt` と、PowerShell の `Get-FileHash .\MiddleFingerDetection.exe -Algorithm SHA256` の結果を比較すると、取得したファイルの整合性を確認できます。開発中のビルドは **Actions → Build Windows exe → Artifacts** からも取得できます。
 
 ### ソースから起動
 
