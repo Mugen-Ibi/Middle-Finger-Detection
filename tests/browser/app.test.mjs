@@ -581,6 +581,8 @@ test('custom mask image and video stay local, combine with backgrounds, and stop
   await page.locator('#stop').click();
   await page.locator('#mask-mode').selectOption('stamp');
   await page.locator('#preview-effect').click();
+  // Mask updates are coalesced into the next animation frame.
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#finger-mask').isVisible(), true);
   await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 5000 });
   assert.equal(await page.locator('#count').textContent(), '01');
