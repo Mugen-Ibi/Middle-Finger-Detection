@@ -163,3 +163,110 @@ test('narrow screens keep controls reachable without horizontal overflow', async
   await page.locator('#stop').click();
   await waitText(page, 'message', 'カメラを停止しました');
 });
+
+test('celebration modes preview all variations without camera access or counting', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    window.cameraRequests = 0;
+    navigator.mediaDevices.getUserMedia = async () => { window.cameraRequests++; throw new Error('Unexpected camera access'); };
+  }));
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const titles = [], effects = [];
+  for (let i = 0; i < 16; i++) {
+    await page.locator('#preview-effect').click();
+    titles.push(await page.locator('#celebration strong').textContent());
+    effects.push(await page.locator('#celebration').getAttribute('data-effect'));
+  }
+  assert.equal(new Set(titles.slice(0, 8)).size, 8);
+  assert.equal(new Set(titles.slice(8)).size, 8);
+  for (let i = 1; i < titles.length; i++) assert.notEqual(titles[i], titles[i - 1]);
+  for (let i = 0; i < 16; i += 4) assert.equal(new Set(effects.slice(i, i + 4)).size, 4);
+  for (let i = 1; i < effects.length; i++) assert.notEqual(effects[i], effects[i - 1]);
+  await page.locator('#message-mode').selectOption('preset');
+  await page.locator('#message-preset').selectOption('2');
+  for (const effect of ['confetti', 'stars', 'fireworks', 'rings']) {
+    await page.locator('#effect-select').selectOption(effect);
+    await page.locator('#preview-effect').click();
+    assert.equal(await page.locator('#celebration strong').textContent(), 'MESSAGE RECEIVED.');
+    assert.equal(await page.locator('#celebration').getAttribute('data-effect'), effect);
+    await page.waitForFunction(() => {
+      const canvas = document.getElementById('confetti');
+      return canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 === 3 && value > 0);
+    });
+  }
+  await page.screenshot({ path: 'test-results/celebration-rings.png', fullPage: true });
+  await page.locator('#message-mode').selectOption('custom');
+  const literal = '<img src=x onerror=alert(1)>';
+  await page.locator('#custom-title').fill(literal);
+  await page.locator('#custom-subtitle').fill('自分だけのメッセージ');
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#celebration strong').textContent(), literal);
+  assert.equal(await page.locator('#celebration img').count(), 0);
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.locator('#custom-title').fill('祝'.repeat(60));
+  await page.locator('#custom-subtitle').fill('福'.repeat(100));
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.evaluate(() => {
+    const box = document.getElementById('stage').getBoundingClientRect();
+    return document.documentElement.scrollWidth <= innerWidth && [...document.querySelector('#celebration').children].every(el => {
+      const child = el.getBoundingClientRect();
+      return child.top >= box.top && child.bottom <= box.bottom && child.left >= box.left && child.right <= box.right;
+    });
+  }), true);
+  await page.locator('#stage').screenshot({ path: 'test-results/celebration-custom-mobile.png' });
+  await page.locator('#custom-title').fill('');
+  await page.locator('#custom-subtitle').fill('');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#celebration strong').textContent(), 'GESTURE DETECTED!');
+  assert.equal(await page.locator('#celebration strong').evaluate(el => getComputedStyle(el).animationName), 'none');
+  assert.equal(await page.locator('#confetti').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+  await page.locator('#celebration').waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('#count').textContent(), '00');
+  assert.equal(await page.evaluate(() => window.cameraRequests), 0);
+  assert.deepEqual(errors, []);
+  await page.reload();
+  assert.equal(await page.locator('#message-mode').inputValue(), 'random');
+  assert.equal(await page.locator('#custom-title').inputValue(), '');
+});
+
+test('accepted gestures use the selected custom text and effect; pause and stop clear particles', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    // Control inference results while exercising the actual camera, gate and UI path.
+    window.raised = false;
+    window.Worker = class {
+      postMessage(data) {
+        if (data.type === 'init') { queueMicrotask(() => this.onmessage?.({ data: { type: 'ready' } })); return; }
+        data.frame.close();
+        const points = Array.from({ length: 21 }, () => ({ x: 0, y: 0, z: 0 }));
+        for (const base of [5, 9, 13, 17]) {
+          const x = base / 10, extended = base === 9;
+          points[base] = { x, y: 0, z: 0 };
+          points[base + 1] = { x, y: 1, z: 0 };
+          points[base + 2] = { x: x + (extended ? 0 : 0.3), y: extended ? 1.7 : 0.6, z: 0 };
+          points[base + 3] = { x, y: extended ? 2.3 : 0.3, z: 0 };
+        }
+        setTimeout(() => this.onmessage?.({ data: { type: 'result', generation: data.generation, id: data.id,
+          landmarks: [], worldLandmarks: window.raised ? [points] : [] } }), 0);
+      }
+      terminate() { this.onmessage = null; }
+    };
+  }));
+  await page.locator('#message-mode').selectOption('custom');
+  await page.locator('#custom-title').fill('ナイスジェスチャー！');
+  await page.locator('#custom-subtitle').fill('届きました。');
+  await page.locator('#effect-select').selectOption('fireworks');
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  assert.equal(await page.locator('#celebration strong').textContent(), 'ナイスジェスチャー！');
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'fireworks');
+  await page.getByRole('button', { name: '検出を一時停止' }).click();
+  assert.equal(await page.locator('#celebration').isVisible(), false);
+  assert.equal(await page.locator('#confetti').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+  await page.locator('#preview-effect').click();
+  await page.locator('#stop').click();
+  assert.equal(await page.locator('#celebration').isVisible(), false);
+  assert.equal(await page.locator('#count').textContent(), '01');
+  assert.equal(await page.locator('#confetti').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+});

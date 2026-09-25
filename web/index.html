@@ -23,7 +23,7 @@
           <div class="stage" id="stage">
             <div class="video-stack mirrored" id="video-stack"><video id="video" autoplay muted playsinline aria-label="選択したカメラの映像"></video><canvas id="landmarks" aria-hidden="true"></canvas></div>
             <div id="placeholder" class="placeholder"><div class="camera-icon" aria-hidden="true">◉</div><h2>まずは、カメラをつなごう。</h2><p>右側から使うカメラを選び、<br>「カメラを開始」を押してください。</p><span class="placeholder-note">映像はこの PC の外へ送信されません。</span></div>
-            <div id="celebration" class="celebration" hidden><span>GESTURE DETECTED</span><strong>OH! YOU DID IT!</strong><p>本日の主役、決定。</p></div>
+            <div id="celebration" class="celebration" role="status" aria-live="polite" aria-atomic="true" hidden><span></span><strong></strong><p></p></div>
             <canvas id="confetti" aria-hidden="true"></canvas>
             <div id="image-warning" class="image-warning" role="status" hidden></div>
           </div>
@@ -47,6 +47,36 @@
           <hr>
           <label class="toggle"><input id="mirror" type="checkbox" checked><span>鏡のように左右反転</span></label>
           <label class="toggle"><input id="show-landmarks" type="checkbox" checked><span>手の骨格を表示</span></label>
+          <hr>
+          <div class="section-label"><span>03</span> 祝福の演出</div>
+          <label for="message-mode">メッセージモード</label>
+          <select id="message-mode">
+            <option value="random">おまかせ（8種類から自動）</option>
+            <option value="preset">定型文を選択</option>
+            <option value="custom">自由入力</option>
+          </select>
+          <div id="preset-fields" class="party-fields" hidden>
+            <label for="message-preset">表示する定型文</label>
+            <select id="message-preset"></select>
+          </div>
+          <div id="custom-fields" class="party-fields" hidden>
+            <label for="custom-title">メインテキスト（60文字まで）</label>
+            <input id="custom-title" type="text" maxlength="60" placeholder="例：その一手、最高！" autocomplete="off">
+            <label for="custom-subtitle">サブテキスト（100文字まで・省略可）</label>
+            <input id="custom-subtitle" type="text" maxlength="100" placeholder="例：今日も自分らしく。" autocomplete="off">
+            <p class="helper">メインが空欄の場合は「GESTURE DETECTED!」を表示します。</p>
+          </div>
+          <p class="helper">文章とエフェクトは自由に組み合わせられます。</p>
+          <label for="effect-select">エフェクト</label>
+          <select id="effect-select">
+            <option value="random">おまかせ（毎回変わる）</option>
+            <option value="confetti">紙吹雪</option>
+            <option value="stars">スターシャワー</option>
+            <option value="fireworks">花火</option>
+            <option value="rings">ネオンリング</option>
+          </select>
+          <button id="preview-effect" class="text-button" type="button">演出を試す</button>
+          <p class="helper">お試しではカメラを使わず、カウントも増えません。設定と入力内容はこのページ内だけで使用し、再読み込みするとリセットされます。</p>
         </aside>
       </div>
       <div class="bottom-grid">

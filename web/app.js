@@ -1,5 +1,6 @@
 import { CameraController, cameraError, isDarkRGBA } from './camera.js';
 import { GestureGate, isMiddleFinger } from './gesture.js';
+import { Celebration, messages } from './celebration.js';
 
 const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('landmarks'), context = overlay.getContext('2d');
@@ -7,11 +8,12 @@ const sample = document.createElement('canvas');
 sample.width = 64; sample.height = 48;
 const sampleContext = sample.getContext('2d', { willReadFrequently: true });
 const gate = new GestureGate();
+const party = new Celebration($('celebration'), $('confetti'));
 let session = 0, active = false, starting = false, paused = false, closed = false;
 let worker, modelReady = false, modelTimer, workerTimer, inFlight = null, requestId = 0;
 let frameHandle, frameCount = 0, lastFrameAt = 0, lastSampleAt = 0, darkSince = null;
 let fpsAt = 0, fpsFrames = 0, cameraName = '', lastError = '', modelStatus = '準備中';
-let partyCount = 0, partyUntil = 0, sessionToken = null, heartbeat;
+let partyCount = 0, sessionToken = null, heartbeat;
 const supportsCamera = Boolean(navigator.mediaDevices?.getUserMedia && video.requestVideoFrameCallback);
 const camera = new CameraController(navigator.mediaDevices, () => {
   stopCamera();
@@ -38,6 +40,9 @@ function controls() {
   $('pause').textContent = paused ? '検出を再開' : '検出を一時停止';
   $('camera-select').disabled = starting || closed;
   $('refresh').disabled = starting || closed;
+  $('effect-select').disabled = closed;
+  $('preview-effect').disabled = closed;
+  for (const id of ['message-mode', 'message-preset', 'custom-title', 'custom-subtitle']) $(id).disabled = closed;
   $('live-dot').classList.toggle('off', !active || frameCount === 0);
   $('camera-state').textContent = starting ? '接続しています' : active ? 'カメラ接続中' : 'カメラ停止中';
 }
@@ -60,8 +65,7 @@ function stopCamera() {
   active = false; starting = false; paused = false;
   video.srcObject = null;
   gate.reset(); clearOverlay();
-  darkSince = null; partyUntil = 0;
-  $('celebration').hidden = true;
+  darkSince = null; party.stop();
   $('image-warning').hidden = true;
   $('placeholder').hidden = false;
   $('hand-state').textContent = '待機中'; $('gesture-state').textContent = '待機中';
@@ -203,24 +207,26 @@ function drawLandmarks(hands) {
   });
 }
 
-let particles = [], animation;
-const confetti = $('confetti'), partyContext = confetti.getContext('2d');
 function celebrate() {
   partyCount++; $('count').textContent = String(partyCount).padStart(2, '0');
-  $('celebration').hidden = false; partyUntil = performance.now() + 2800;
-  particles = Array.from({ length: 55 }, () => ({ x: Math.random(), y: Math.random() - 1,
-    speed: 0.001 + Math.random() * 0.004, color: ['#c4f878', '#c8afff', '#ffd596', '#ffffff'][Math.floor(Math.random() * 4)] }));
-  if (!animation) animateParty();
+  party.play(partyOptions());
 }
-function animateParty() {
-  const width = confetti.clientWidth, height = confetti.clientHeight;
-  confetti.width = width; confetti.height = height;
-  if (performance.now() >= partyUntil) { $('celebration').hidden = true; animation = null; return; }
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    particles.forEach(p => { p.y += p.speed; partyContext.fillStyle = p.color; partyContext.fillRect(p.x * width, (p.y % 1) * height, 5, 10); });
-  }
-  animation = requestAnimationFrame(animateParty);
+
+function partyOptions() {
+  return { effect: $('effect-select').value, mode: $('message-mode').value,
+    preset: Number($('message-preset').value), title: $('custom-title').value, subtitle: $('custom-subtitle').value };
 }
+messages.forEach(([title, subtitle], i) => $('message-preset').add(new Option(`${title} / ${subtitle}`, String(i))));
+function messageMode() {
+  $('preset-fields').hidden = $('message-mode').value !== 'preset';
+  $('custom-fields').hidden = $('message-mode').value !== 'custom';
+}
+$('message-mode').onchange = messageMode;
+messageMode();
+$('preview-effect').onclick = () => {
+  $('stage').scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  party.play({ ...partyOptions(), preview: true });
+};
 
 $('start').onclick = startCamera;
 $('stop').onclick = () => { stopCamera(); message('カメラを停止しました。映像の取得も停止しています。'); };
@@ -229,7 +235,7 @@ $('camera-select').onchange = () => {
   if (active) { stopCamera(); message('カメラを変更しました。「カメラを開始」で選択した機器を接続します。'); }
 };
 $('pause').onclick = () => {
-  paused = !paused; gate.reset(); clearOverlay();
+  paused = !paused; gate.reset(); clearOverlay(); party.stop();
   $('hand-state').textContent = paused ? '一時停止中' : '手を探しています'; $('gesture-state').textContent = '待機中';
   controls();
 };
@@ -257,6 +263,7 @@ window.addEventListener('pagehide', () => { stopCamera(); worker?.terminate(); c
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 document.addEventListener('visibilitychange', () => {
   gate.reset();
+  if (document.hidden) party.stop();
   if (!document.hidden) lastFrameAt = performance.now();
 });
 navigator.mediaDevices?.addEventListener('devicechange', () => refreshDevices().catch(() => {}));
