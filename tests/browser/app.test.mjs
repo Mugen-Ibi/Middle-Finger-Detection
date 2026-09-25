@@ -230,8 +230,8 @@ test('celebration modes preview all variations without camera access or counting
   assert.equal(await page.locator('#custom-title').inputValue(), '');
 });
 
-test('accepted gestures use the selected custom text and effect; pause and stop clear particles', async t => {
-  const page = await pageFor(t, context => context.addInitScript(() => {
+async function mockGestures(context) {
+  return context.addInitScript(() => {
     // Control inference results while exercising the actual camera, gate and UI path.
     window.raised = false;
     window.Worker = class {
@@ -246,12 +246,22 @@ test('accepted gestures use the selected custom text and effect; pause and stop 
           points[base + 2] = { x: x + (extended ? 0 : 0.3), y: extended ? 1.7 : 0.6, z: 0 };
           points[base + 3] = { x, y: extended ? 2.3 : 0.3, z: 0 };
         }
+        const imagePoints = Array.from({ length: 21 }, () => ({ x: 0.3, y: 0.8, z: 0 }));
+        imagePoints[5] = { x: 0.22, y: 0.7, z: 0 }; imagePoints[13] = { x: 0.38, y: 0.7, z: 0 };
+        [0.7, 0.52, 0.38, 0.22].forEach((y, i) => { imagePoints[9 + i] = { x: 0.3, y, z: 0 }; });
+        const images = window.raised ? [imagePoints.map(p => ({ ...p, x: p.x + (window.handOffsetX || 0) }))] : [];
+        if (window.raised && window.secondHand) images.push(imagePoints.map(p => ({ ...p, x: p.x + 0.4 })));
+        if (window.dropResults) return;
         setTimeout(() => this.onmessage?.({ data: { type: 'result', generation: data.generation, id: data.id,
-          landmarks: [], worldLandmarks: window.raised ? [points] : [] } }), 0);
+          landmarks: images, worldLandmarks: images.map(() => points) } }), 0);
       }
       terminate() { this.onmessage = null; }
     };
-  }));
+  });
+}
+
+test('accepted gestures use the selected custom text and effect; pause and stop clear particles', async t => {
+  const page = await pageFor(t, mockGestures);
   await page.locator('#message-mode').selectOption('custom');
   await page.locator('#custom-title').fill('ナイスジェスチャー！');
   await page.locator('#custom-subtitle').fill('届きました。');
@@ -269,4 +279,203 @@ test('accepted gestures use the selected custom text and effect; pause and stop 
   assert.equal(await page.locator('#celebration').isVisible(), false);
   assert.equal(await page.locator('#count').textContent(), '01');
   assert.equal(await page.locator('#confetti').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+});
+
+async function backgroundFile(page, kind = 'image') {
+  if (kind === 'video') return { name: 'test-background.webm', mimeType: 'video/webm',
+    buffer: await readFile('tests/fixtures/background.webm') };
+  const bytes = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas'); canvas.width = 96; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#2864aa'; ctx.fillRect(0, 0, 96, 64);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    return [...new Uint8Array(await blob.arrayBuffer())];
+  });
+  return { name: 'test-background.png', mimeType: 'image/png', buffer: Buffer.from(bytes) };
+}
+
+async function chooseBackground(page, file) {
+  await page.locator('#background-mode').selectOption('media');
+  await page.locator('#background-file').setInputFiles(file);
+  await page.waitForFunction(() => {
+    const status = document.getElementById('background-status');
+    return status.textContent.includes('選択済み') || status.classList.contains('error');
+  }, null, { timeout: 20000 });
+  assert.match(await page.locator('#background-status').textContent(), /選択済み/);
+}
+
+test('local image backgrounds preview, fit, reject bad files and clear without uploads', async t => {
+  const page = await pageFor(t);
+  const errors = [], uploads = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => {
+    if (request.method() !== 'GET' && !request.url().endsWith('/api/heartbeat')) uploads.push(request.url());
+  });
+  await chooseBackground(page, await backgroundFile(page));
+  assert.equal(await page.locator('#media-background').isVisible(), false);
+  await page.locator('#background-fit').selectOption('contain');
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  assert.equal(await page.locator('#media-background').getAttribute('data-fit'), 'contain');
+  assert.deepEqual(await page.locator('#media-background canvas').evaluate(canvas => [...canvas.getContext('2d').getImageData(0, 0, 1, 1).data]), [40, 100, 170, 255]);
+  assert.equal(await page.locator('#count').textContent(), '00');
+  await page.locator('#media-background').waitFor({ state: 'hidden', timeout: 5000 });
+  await page.locator('#background-file').setInputFiles({ name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not an image') });
+  await waitText(page, 'background-status', '前の背景は保持');
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#media-background canvas').isVisible(), true);
+  await page.locator('#clear-background').click();
+  assert.equal(await page.locator('#media-background').isVisible(), false);
+  assert.equal(await page.locator('#media-background').evaluate(el => el.childElementCount), 0);
+  // Clearing a selection also cancels a decode that has not finished yet.
+  const file = await backgroundFile(page);
+  await page.evaluate(async bytes => {
+    const input = document.getElementById('background-file'), transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], 'test-background.png', { type: 'image/png' }));
+    input.files = transfer.files; input.dispatchEvent(new Event('change'));
+    document.getElementById('clear-background').click();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }, [...file.buffer]);
+  assert.equal(await page.locator('#media-background').evaluate(el => el.childElementCount), 0);
+  assert.deepEqual(errors, []); assert.deepEqual(uploads, []);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
+test('video background stays through a held pose, loops muted and stops on release or pause', async t => {
+  const page = await pageFor(t, mockGestures);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await chooseBackground(page, await backgroundFile(page, 'video'));
+  const media = page.locator('#media-background video');
+  assert.equal(await media.evaluate(video => video.paused), true);
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  await page.waitForFunction(() => {
+    const video = document.querySelector('#media-background video');
+    return !video.paused && video.currentTime > 0;
+  });
+  assert.equal(await media.evaluate(video => video.muted && video.loop), true);
+  await page.locator('#celebration').waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  assert.equal(await media.evaluate(video => !video.paused && !video.ended), true);
+  assert.equal(await page.locator('#count').textContent(), '01');
+  await page.locator('#stage').screenshot({ path: 'test-results/video-background.png' });
+  await page.evaluate(() => { window.raised = false; });
+  await page.locator('#media-background').waitFor({ state: 'hidden', timeout: 3000 });
+  assert.equal(await media.evaluate(video => video.paused), true);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '02');
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  await page.getByRole('button', { name: '検出を一時停止' }).click();
+  assert.equal(await page.locator('#media-background').isVisible(), false);
+  assert.equal(await media.evaluate(video => video.paused), true);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  assert.equal(await media.evaluate(video => video.paused), true);
+  await page.locator('#stop').click();
+  assert.equal(await page.locator('#media-background').isVisible(), false);
+  await page.locator('#clear-background').click();
+  assert.equal(await media.count(), 0);
+  assert.deepEqual(errors, []);
+});
+
+async function maskPixel(page, sourceX, sourceY) {
+  return page.locator('#finger-mask').evaluate((canvas, [x, y]) => {
+    const video = document.getElementById('video');
+    const fit = Math.min(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+    const px = (canvas.width - video.videoWidth * fit) / 2 + x * video.videoWidth * fit;
+    const py = (canvas.height - video.videoHeight * fit) / 2 + y * video.videoHeight * fit;
+    return [...canvas.getContext('2d').getImageData(Math.round(px), Math.round(py), 1, 1).data];
+  }, [sourceX, sourceY]);
+}
+
+test('finger stamps track two hands, mirror and movement; remain after the celebration and clear on loss', async t => {
+  const page = await pageFor(t, mockGestures);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.locator('#mask-mode').selectOption('stamp');
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
+  for (const stamp of ['bar', 'mosaic', 'star', 'heart', 'smile', 'stop']) {
+    await page.locator('#mask-stamp').selectOption(stamp);
+    assert.equal((await maskPixel(page, 0.7, 0.46))[3], 255);
+  }
+  await waitText(page, 'count', '01');
+  await page.locator('#celebration').waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('#finger-mask').isVisible(), true);
+  await page.locator('#mirror').uncheck();
+  await page.waitForFunction(() => !document.getElementById('video-stack').classList.contains('mirrored'));
+  // Allow the next draw to reflect the settings, independent of inference timing.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal((await maskPixel(page, 0.3, 0.46))[3], 255);
+  assert.equal((await maskPixel(page, 0.7, 0.46))[3], 0);
+  await page.evaluate(() => { window.secondHand = true; });
+  await waitText(page, 'hand-state', '2 手');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  assert.equal((await maskPixel(page, 0.3, 0.46))[3], 255);
+  assert.equal((await maskPixel(page, 0.7, 0.46))[3], 255);
+  await page.locator('#stage').screenshot({ path: 'test-results/finger-masks.png' });
+  await page.evaluate(() => { window.handOffsetX = 0.15; window.secondHand = false; });
+  await waitText(page, 'hand-state', '1 手');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  assert.equal((await maskPixel(page, 0.45, 0.46))[3], 255);
+  assert.equal((await maskPixel(page, 0.3, 0.46))[3], 0);
+  await page.evaluate(() => { window.raised = false; });
+  await page.locator('#finger-mask').waitFor({ state: 'hidden' });
+  await page.evaluate(() => { window.raised = true; });
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
+  await page.evaluate(() => { window.dropResults = true; });
+  await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 2000 });
+  assert.deepEqual(errors, []);
+});
+
+test('custom mask image and video stay local, combine with backgrounds, and stop when disabled', async t => {
+  const page = await pageFor(t, mockGestures);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const file = await backgroundFile(page);
+  await chooseBackground(page, file);
+  await page.locator('#mask-mode').selectOption('media');
+  await page.locator('#mask-file').setInputFiles(file);
+  await waitText(page, 'mask-status', '画像を選択済み');
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
+  assert.deepEqual(await maskPixel(page, 0.7, 0.46), [40, 100, 170, 255]);
+  await waitText(page, 'count', '01');
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  assert.equal(await page.locator('#diagnostics').evaluate(el => el.textContent.includes('test-background')), false);
+  await page.locator('#mask-file').setInputFiles(await backgroundFile(page, 'video'));
+  await waitText(page, 'mask-status', '動画を選択済み');
+  await page.waitForFunction(() => {
+    const video = document.querySelector('#mask-source video');
+    return video && !video.paused && video.currentTime > 0;
+  });
+  const media = page.locator('#mask-source video');
+  assert.equal(await media.evaluate(video => video.muted && video.loop), true);
+  await page.locator('#celebration').waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('#finger-mask').isVisible(), true);
+  assert.equal(await media.evaluate(video => !video.paused && !video.ended), true);
+  await page.locator('#mask-mode').selectOption('off');
+  await page.locator('#finger-mask').waitFor({ state: 'hidden' });
+  assert.equal(await media.evaluate(video => video.paused), true);
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  await page.locator('#mask-mode').selectOption('media');
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: '検出を一時停止' }).click();
+  assert.equal(await page.locator('#finger-mask').isVisible(), false);
+  assert.equal(await media.evaluate(video => video.paused), true);
+  await page.locator('#clear-mask').click();
+  assert.equal(await media.count(), 0);
+  await page.locator('#stop').click();
+  await page.locator('#mask-mode').selectOption('stamp');
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#finger-mask').isVisible(), true);
+  await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('#count').textContent(), '01');
+  assert.deepEqual(errors, []);
 });

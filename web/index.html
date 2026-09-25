@@ -23,6 +23,8 @@
           <div class="stage" id="stage">
             <div class="video-stack mirrored" id="video-stack"><video id="video" autoplay muted playsinline aria-label="選択したカメラの映像"></video><canvas id="landmarks" aria-hidden="true"></canvas></div>
             <div id="placeholder" class="placeholder"><div class="camera-icon" aria-hidden="true">◉</div><h2>まずは、カメラをつなごう。</h2><p>右側から使うカメラを選び、<br>「カメラを開始」を押してください。</p><span class="placeholder-note">映像はこの PC の外へ送信されません。</span></div>
+            <div id="media-background" class="media-background" aria-hidden="true" hidden></div>
+            <canvas id="finger-mask" aria-hidden="true" hidden></canvas>
             <div id="celebration" class="celebration" role="status" aria-live="polite" aria-atomic="true" hidden><span></span><strong></strong><p></p></div>
             <canvas id="confetti" aria-hidden="true"></canvas>
             <div id="image-warning" class="image-warning" role="status" hidden></div>
@@ -75,6 +77,55 @@
             <option value="fireworks">花火</option>
             <option value="rings">ネオンリング</option>
           </select>
+          <div class="party-fields">
+            <label for="background-mode">ポーズを維持している間の背景</label>
+            <select id="background-mode">
+              <option value="camera">カメラ映像（そのまま）</option>
+              <option value="media">選んだ画像・動画</option>
+            </select>
+          </div>
+          <div id="background-fields" class="party-fields" hidden>
+            <label for="background-file">背景の画像・動画ファイル</label>
+            <input id="background-file" type="file" accept="image/*,video/*" aria-describedby="background-status background-help">
+            <div id="background-status" class="helper" role="status">背景ファイルは未選択です。</div>
+            <button id="clear-background" class="text-button" type="button">背景ファイルを解除</button>
+            <label for="background-fit">表示方法</label>
+            <select id="background-fit">
+              <option value="cover">画面いっぱい（はみ出す部分を切り取り）</option>
+              <option value="contain">全体を表示（余白あり）</option>
+            </select>
+            <p id="background-help" class="helper">ポーズを維持している間、背景を表示します。動画は無音で先頭からループ再生。画像は静止画です。ファイルを送信・保存せず、再読み込みで選択を解除します。</p>
+          </div>
+          <hr>
+          <div class="section-label"><span>04</span> 中指のマスク</div>
+          <label for="mask-mode">マスクの種類</label>
+          <select id="mask-mode">
+            <option value="off">オフ</option>
+            <option value="stamp">スタンプ</option>
+            <option value="media">選んだ画像・動画</option>
+          </select>
+          <div id="mask-stamp-fields" class="party-fields" hidden>
+            <label for="mask-stamp">スタンプを選ぶ</label>
+            <select id="mask-stamp">
+              <option value="bar">黒帯 / CENSORED</option>
+              <option value="mosaic">モザイク柄</option>
+              <option value="star">星</option>
+              <option value="heart">ハート</option>
+              <option value="smile">スマイル</option>
+              <option value="stop">禁止マーク</option>
+            </select>
+          </div>
+          <div id="mask-media-fields" class="party-fields" hidden>
+            <label for="mask-file">マスクの画像・動画ファイル</label>
+            <input id="mask-file" type="file" accept="image/*,video/*" aria-describedby="mask-status mask-help">
+            <div id="mask-status" class="helper" role="status">マスクファイルは未選択です。</div>
+            <button id="clear-mask" class="text-button" type="button">マスクファイルを解除</button>
+          </div>
+          <div id="mask-size-fields" class="party-fields" hidden>
+            <label for="mask-size">マスクの大きさ <output id="mask-size-value" for="mask-size">130%</output></label>
+            <input id="mask-size" type="range" min="80" max="200" step="10" value="130">
+          </div>
+          <p id="mask-help" class="helper">検出中の中指に追従します。両手にも対応。動画は無音ループ、画像は静止画で、透過部分には下地が付きます。「演出を試す」で中央にプレビューできます。</p>
           <button id="preview-effect" class="text-button" type="button">演出を試す</button>
           <p class="helper">お試しではカメラを使わず、カウントも増えません。設定と入力内容はこのページ内だけで使用し、再読み込みするとリセットされます。</p>
         </aside>
@@ -87,5 +138,6 @@
     </main>
     <footer><span>音声は取得しません。映像・判定結果は保存しません。</span><button id="quit" class="text-button" type="button">アプリを終了 ↗</button></footer>
   </div>
+  <div id="mask-source" class="mask-source" aria-hidden="true" hidden></div>
 </body>
 </html>

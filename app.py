@@ -44,7 +44,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
-                         "style-src 'self'; img-src 'self' data:; media-src 'self' blob:; "
+                         "style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
                          "connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()

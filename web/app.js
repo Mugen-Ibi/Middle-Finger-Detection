@@ -1,6 +1,8 @@
 import { CameraController, cameraError, isDarkRGBA } from './camera.js';
 import { GestureGate, isMiddleFinger } from './gesture.js';
 import { Celebration, messages } from './celebration.js';
+import { MediaBackground } from './background.js';
+import { FingerMask } from './mask.js';
 
 const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('landmarks'), context = overlay.getContext('2d');
@@ -9,6 +11,15 @@ sample.width = 64; sample.height = 48;
 const sampleContext = sample.getContext('2d', { willReadFrequently: true });
 const gate = new GestureGate();
 const party = new Celebration($('celebration'), $('confetti'));
+const background = new MediaBackground($('media-background'), (text, error = false) => {
+  $('background-status').textContent = text;
+  $('background-status').classList.toggle('error', error);
+});
+const fingerMask = new FingerMask($('finger-mask'), $('mask-source'), (text, error = false) => {
+  $('mask-status').textContent = text;
+  $('mask-status').classList.toggle('error', error);
+});
+let poseActive = false, backgroundPreviewTimer = null, poseWatchdog = null;
 let session = 0, active = false, starting = false, paused = false, closed = false;
 let worker, modelReady = false, modelTimer, workerTimer, inFlight = null, requestId = 0;
 let frameHandle, frameCount = 0, lastFrameAt = 0, lastSampleAt = 0, darkSince = null;
@@ -43,6 +54,8 @@ function controls() {
   $('effect-select').disabled = closed;
   $('preview-effect').disabled = closed;
   for (const id of ['message-mode', 'message-preset', 'custom-title', 'custom-subtitle']) $(id).disabled = closed;
+  for (const id of ['background-mode', 'background-file', 'background-fit', 'clear-background']) $(id).disabled = closed;
+  for (const id of ['mask-mode', 'mask-stamp', 'mask-file', 'mask-size', 'clear-mask']) $(id).disabled = closed;
   $('live-dot').classList.toggle('off', !active || frameCount === 0);
   $('camera-state').textContent = starting ? '接続しています' : active ? 'カメラ接続中' : 'カメラ停止中';
 }
@@ -65,7 +78,7 @@ function stopCamera() {
   active = false; starting = false; paused = false;
   video.srcObject = null;
   gate.reset(); clearOverlay();
-  darkSince = null; party.stop();
+  darkSince = null; stopScene();
   $('image-warning').hidden = true;
   $('placeholder').hidden = false;
   $('hand-state').textContent = '待機中'; $('gesture-state').textContent = '待機中';
@@ -153,6 +166,7 @@ async function submitFrame(generation, timestamp) {
 }
 
 function modelFailed(detail) {
+  gate.reset(); stopScene();
   clearTimeout(modelTimer); clearTimeout(workerTimer);
   worker?.terminate(); worker = null; modelReady = false; inFlight = null;
   modelStatus = '読み込み失敗'; $('model-state').textContent = modelStatus;
@@ -162,6 +176,7 @@ function modelFailed(detail) {
   clearOverlay(); controls(); diagnostics();
 }
 function initModel() {
+  stopScene();
   clearTimeout(modelTimer); clearTimeout(workerTimer); worker?.terminate();
   modelReady = false; inFlight = null; gate.reset();
   modelStatus = '準備中'; $('model-state').textContent = modelStatus; $('retry-model').hidden = true;
@@ -184,8 +199,13 @@ function initModel() {
         $('hand-state').textContent = hands ? `${hands} 手を検出` : '手を探しています';
         drawLandmarks(data.landmarks);
         const detected = data.worldLandmarks.some(isMiddleFinger);
+        fingerMask.update(data.landmarks.filter((_, i) => isMiddleFinger(data.worldLandmarks[i])), video.videoWidth, video.videoHeight);
         $('gesture-state').textContent = detected ? '中指を検出' : '待機中';
-        if (gate.update(detected, performance.now())) celebrate();
+        if (gate.update(detected, performance.now())) { poseActive = true; celebrate(); }
+        if (gate.armed) poseActive = false;
+        syncBackground();
+        clearTimeout(poseWatchdog);
+        poseWatchdog = setTimeout(() => { gate.reset(); poseActive = false; syncBackground(); }, 1200);
       }
     };
     current.postMessage({ type: 'init' });
@@ -216,6 +236,51 @@ function partyOptions() {
   return { effect: $('effect-select').value, mode: $('message-mode').value,
     preset: Number($('message-preset').value), title: $('custom-title').value, subtitle: $('custom-subtitle').value };
 }
+
+function syncBackground() {
+  if ($('background-mode').value === 'media' && (poseActive || backgroundPreviewTimer !== null)) {
+    background.show($('background-fit').value);
+  } else background.hide();
+}
+function stopScene() {
+  party.stop(); poseActive = false;
+  clearTimeout(poseWatchdog); clearTimeout(backgroundPreviewTimer);
+  poseWatchdog = backgroundPreviewTimer = null;
+  background.hide();
+  fingerMask.hide();
+}
+$('background-mode').onchange = () => {
+  $('background-fields').hidden = $('background-mode').value !== 'media';
+  syncBackground();
+};
+$('background-fit').onchange = syncBackground;
+$('background-file').onchange = async () => {
+  const file = $('background-file').files[0];
+  if (!file) return;
+  if (await background.load(file)) syncBackground();
+  // Allow choosing the same file again after a decoding error.
+  $('background-file').value = '';
+};
+$('clear-background').onclick = () => { background.clear(); $('background-file').value = ''; };
+function maskSettings() {
+  $('mask-stamp-fields').hidden = $('mask-mode').value !== 'stamp';
+  $('mask-media-fields').hidden = $('mask-mode').value !== 'media';
+  $('mask-size-fields').hidden = $('mask-mode').value === 'off';
+  $('mask-size-value').textContent = `${$('mask-size').value}%`;
+  fingerMask.configure({ mode: $('mask-mode').value, stamp: $('mask-stamp').value,
+    size: Number($('mask-size').value) / 100, mirrored: $('mirror').checked });
+}
+$('mask-mode').onchange = maskSettings;
+$('mask-stamp').onchange = maskSettings;
+$('mask-size').oninput = maskSettings;
+$('mask-file').onchange = async () => {
+  const file = $('mask-file').files[0];
+  if (!file) return;
+  if (await fingerMask.media.load(file)) maskSettings();
+  $('mask-file').value = '';
+};
+$('clear-mask').onclick = () => { fingerMask.media.clear(); fingerMask.hide(); $('mask-file').value = ''; };
+maskSettings();
 messages.forEach(([title, subtitle], i) => $('message-preset').add(new Option(`${title} / ${subtitle}`, String(i))));
 function messageMode() {
   $('preset-fields').hidden = $('message-mode').value !== 'preset';
@@ -226,6 +291,11 @@ messageMode();
 $('preview-effect').onclick = () => {
   $('stage').scrollIntoView({ block: 'nearest', behavior: 'instant' });
   party.play({ ...partyOptions(), preview: true });
+  clearTimeout(backgroundPreviewTimer);
+  background.hide();
+  backgroundPreviewTimer = setTimeout(() => { backgroundPreviewTimer = null; syncBackground(); }, 3000);
+  syncBackground();
+  fingerMask.preview();
 };
 
 $('start').onclick = startCamera;
@@ -235,11 +305,14 @@ $('camera-select').onchange = () => {
   if (active) { stopCamera(); message('カメラを変更しました。「カメラを開始」で選択した機器を接続します。'); }
 };
 $('pause').onclick = () => {
-  paused = !paused; gate.reset(); clearOverlay(); party.stop();
+  paused = !paused; gate.reset(); clearOverlay(); stopScene();
   $('hand-state').textContent = paused ? '一時停止中' : '手を探しています'; $('gesture-state').textContent = '待機中';
   controls();
 };
-$('mirror').onchange = () => $('video-stack').classList.toggle('mirrored', $('mirror').checked);
+$('mirror').onchange = () => {
+  $('video-stack').classList.toggle('mirrored', $('mirror').checked);
+  maskSettings();
+};
 $('show-landmarks').onchange = clearOverlay;
 $('retry-model').onclick = initModel;
 $('copy-diagnostics').onclick = async () => {
@@ -255,15 +328,17 @@ async function serverPost(path) {
 }
 $('quit').onclick = async () => {
   stopCamera(); worker?.terminate(); clearInterval(heartbeat); clearTimeout(modelTimer); clearTimeout(workerTimer);
+  background.clear(); $('background-file').value = '';
+  fingerMask.media.clear(); $('mask-file').value = '';
   closed = true; controls(); $('quit').disabled = true;
   try { await serverPost('/api/quit'); message('終了しました。このタブを閉じてください。'); }
   catch { message('カメラは停止しました。このタブを閉じてください。ローカルサーバーは無操作で自動終了します。'); }
 };
-window.addEventListener('pagehide', () => { stopCamera(); worker?.terminate(); clearInterval(heartbeat); });
+window.addEventListener('pagehide', () => { stopCamera(); background.clear(); fingerMask.media.clear(); worker?.terminate(); clearInterval(heartbeat); });
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 document.addEventListener('visibilitychange', () => {
   gate.reset();
-  if (document.hidden) party.stop();
+  if (document.hidden) stopScene();
   if (!document.hidden) lastFrameAt = performance.now();
 });
 navigator.mediaDevices?.addEventListener('devicechange', () => refreshDevices().catch(() => {}));

@@ -42,6 +42,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b'Gesture Party', body)
         self.assertIn("connect-src 'self'", headers['Content-Security-Policy'])
+        self.assertIn("img-src 'self' data: blob:", headers['Content-Security-Policy'])
         self.assertEqual(headers['Permissions-Policy'], 'camera=(self), microphone=(), geolocation=()')
         self.assertNotIn('Access-Control-Allow-Origin', headers)
 
