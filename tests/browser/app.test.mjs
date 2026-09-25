@@ -392,6 +392,103 @@ async function maskPixel(page, sourceX, sourceY) {
   }, [sourceX, sourceY]);
 }
 
+test('OBS capture preserves the camera, gesture effects and files across ratios and resizing', async t => {
+  const page = await pageFor(t, mockGestures);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await chooseBackground(page, await backgroundFile(page));
+  await page.locator('#mask-mode').selectOption('stamp');
+  await page.locator('#message-mode').selectOption('custom');
+  await page.locator('#custom-title').fill('OBS TEST');
+  await start(page);
+  await page.evaluate(() => { window.originalStream = document.getElementById('video').srcObject; });
+
+  let expectedCount = 0;
+  for (const [option, ratio] of [['wide', 16 / 9], ['standard', 4 / 3], ['square', 1]]) {
+    await page.locator('#capture-ratio').selectOption(option);
+    await page.locator('#enter-capture').click();
+    for (const selector of ['header', '.controls', '.panel-heading', '.preview-footer', 'footer']) {
+      assert.equal(await page.locator(selector).isVisible(), false);
+    }
+    await page.evaluate(() => { window.raised = true; });
+    await waitText(page, 'count', String(++expectedCount).padStart(2, '0'));
+    await page.locator('#celebration').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#celebration strong').textContent(), 'OBS TEST');
+    assert.equal(await page.locator('#media-background').isVisible(), true);
+    await page.locator('#finger-mask').waitFor({ state: 'visible' });
+
+    for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const box = await page.locator('#stage').boundingBox();
+      assert.ok(Math.abs(box.width / box.height - ratio) < 0.005);
+      assert.ok(Math.abs(box.x * 2 + box.width - viewport.width) < 1);
+      assert.ok(Math.abs(box.y * 2 + box.height - viewport.height) < 1);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight), true);
+      assert.equal((await maskPixel(page, 0.7, 0.46))[3], 255);
+    }
+    if (option === 'wide') await page.screenshot({ path: 'test-results/obs-portrait.png' });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    if (option === 'wide') await page.screenshot({ path: 'test-results/obs-wide.png' });
+    assert.equal(await page.locator('#video').evaluate(video => video.srcObject === window.originalStream && video.srcObject.active), true);
+    await page.evaluate(() => { window.raised = false; });
+    await page.locator('#media-background').waitFor({ state: 'hidden' });
+    if (option === 'standard') await page.locator('#stage').dblclick();
+    else await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#enter-capture').isVisible(), true);
+    assert.equal(await page.locator('#enter-capture').evaluate(el => el === document.activeElement), true);
+    assert.equal(await page.locator('#custom-title').inputValue(), 'OBS TEST');
+  }
+  assert.equal(await page.locator('#count').textContent(), '03');
+  await page.reload();
+  assert.equal(await page.locator('.controls').isVisible(), true);
+  assert.equal(await page.locator('#capture-ratio').inputValue(), 'wide');
+  assert.deepEqual(errors, []);
+});
+
+test('device list failure after camera connection keeps the live preview running', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.evaluate(() => {
+    navigator.mediaDevices.enumerateDevices = async () => {
+      throw new DOMException('Device list unavailable', 'NotReadableError');
+    };
+  });
+  await page.locator('#start').click();
+  await page.waitForFunction(() => document.getElementById('message').textContent.includes('一覧を更新できません'), null, { timeout: 5000 });
+  assert.equal(await page.locator('#video').evaluate(video => video.srcObject?.active), true);
+  await waitText(page, 'camera-state', '映像を受信中');
+  assert.equal(await page.locator('#stop').isEnabled(), true);
+});
+
+test('Firefox receives supported-browser guidance before requesting camera access', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 Firefox/143.0' });
+    navigator.mediaDevices.getUserMedia = () => { throw new Error('Camera must not be requested'); };
+  }));
+  await waitText(page, 'message', 'Firefox は対応対象外');
+  assert.equal(await page.locator('#start').isEnabled(), false);
+  assert.match(await page.locator('#message').textContent(), /Microsoft Edge.*Google Chrome/);
+});
+
+test('OBS capture stays clean on camera loss and restores the error and controls on exit', async t => {
+  const page = await pageFor(t, mockGestures);
+  await start(page);
+  await page.locator('#enter-capture').click();
+  await page.locator('#video').evaluate(video => {
+    const track = video.srcObject.getVideoTracks()[0];
+    track.stop();
+    track.dispatchEvent(new Event('ended'));
+  });
+  assert.equal(await page.locator('#video').evaluate(video => video.srcObject), null);
+  assert.equal(await page.locator('#placeholder').isVisible(), false);
+  assert.equal(await page.locator('.controls').isVisible(), false);
+  await page.screenshot({ path: 'test-results/obs-camera-stopped.png' });
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#placeholder').isVisible(), true);
+  await waitText(page, 'message', 'カメラとの接続が切れました');
+  await start(page);
+});
+
 test('finger stamps track two hands, mirror and movement; remain after the celebration and clear on loss', async t => {
   const page = await pageFor(t, mockGestures);
   const errors = [];

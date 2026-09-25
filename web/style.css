@@ -39,3 +39,15 @@
 #mask-file::file-selector-button{background:#34433a;color:#edf3f1;border:0;border-radius:5px;padding:7px;margin-right:8px;cursor:pointer}
 #mask-size{accent-color:var(--mint);padding:0}
 #mask-size-value{float:right;color:var(--mint)}
+
+/* A clean, fixed-ratio capture surface. No hover controls enter the output. */
+#enter-capture{width:100%;margin-bottom:12px}
+body.capture-mode{overflow:hidden;background:#000}
+.capture-mode .shell{padding:0}
+.capture-mode header,.capture-mode footer,
+.capture-mode main>:not(.workspace),
+.capture-mode .workspace>:not(.preview-panel),
+.capture-mode .preview-panel>:not(.stage){display:none}
+.capture-mode .preview-panel{position:fixed;inset:0;border:0;border-radius:0;background:#000}
+.capture-mode .stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(100vw,calc(100vh * var(--capture-ratio, 1.777777778)));height:auto;aspect-ratio:var(--capture-ratio, 1.777777778);background:#000;outline:none;cursor:none}
+.capture-mode .placeholder,.capture-mode .image-warning{display:none}

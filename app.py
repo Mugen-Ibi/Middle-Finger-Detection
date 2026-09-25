@@ -5,8 +5,11 @@ import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -19,12 +22,19 @@ APP_ID = "gesture-party-v2"
 
 class LocalServer(ThreadingHTTPServer):
     daemon_threads = True
+    # SO_REUSEADDR permits multiple listeners on one port on Windows.
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, address, root=ROOT):
         self.root = Path(root).resolve()
         self.token = secrets.token_urlsafe(32)
         self.last_seen = time.monotonic()
         super().__init__(address, partial(Handler, directory=str(self.root)))
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
     @property
     def origin(self):
@@ -115,6 +125,33 @@ def required_assets(root=ROOT):
             root / "models/hand_landmarker.task"]
 
 
+def supported_browser_paths():
+    # Prefer Edge, then Chrome; never change the user's default browser.
+    for relative in ("Microsoft/Edge/Application/msedge.exe", "Google/Chrome/Application/chrome.exe"):
+        for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(variable)
+            if base:
+                candidate = Path(base) / relative
+                if candidate.is_file():
+                    yield candidate
+
+
+def open_app_browser(url):
+    if sys.platform != "win32":
+        if webbrowser.open(url):
+            return
+    else:
+        for executable in supported_browser_paths():
+            try:
+                subprocess.Popen([str(executable), "--new-window", url])
+                return
+            except OSError:
+                continue
+    raise RuntimeError(f"Microsoft Edge / Google Chrome を起動できません。\n"
+                       f"対応ブラウザーをインストールして再起動するか、\n"
+                       f"--no-browser で起動し、Edge / Chrome で {url} を開いてください。")
+
+
 def run(port=8765, open_browser=True, idle_seconds=300):
     missing = [str(p) for p in required_assets() if not p.is_file()]
     if missing:
@@ -136,12 +173,12 @@ def run(port=8765, open_browser=True, idle_seconds=300):
                 return
 
     with server:
-        threading.Thread(target=idle_shutdown, daemon=True).start()
-        if open_browser and not webbrowser.open(server.origin):
-            raise RuntimeError(f"ブラウザーを開けません。Edge / Chrome で {server.origin} を開いてください。")
-        if sys.stdout is not None:
-            print(f"Gesture Party: {server.origin}", flush=True)
         try:
+            if open_browser:
+                open_app_browser(server.origin)
+            threading.Thread(target=idle_shutdown, daemon=True).start()
+            if sys.stdout is not None:
+                print(f"Gesture Party: {server.origin}", flush=True)
             server.serve_forever(poll_interval=0.25)
         finally:
             finished.set()

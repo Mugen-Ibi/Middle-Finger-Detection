@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 import app
 
@@ -52,6 +53,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(body)['app'], app.APP_ID)
         self.assertEqual(json.loads(body)['token'], self.server.token)
 
+    def test_running_server_port_cannot_be_shared_by_another_instance(self):
+        with self.assertRaises(OSError):
+            with app.LocalServer(('127.0.0.1', self.server.server_port), self.server.root):
+                pass
+
     def test_host_rebinding_rejected(self):
         self.assertEqual(self.request(headers={'Host': 'attacker.example'})[0], 403)
         self.assertEqual(self.request(method='HEAD', headers={'Host': 'attacker.example'})[0], 403)
@@ -80,6 +86,40 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request('/api/quit', 'POST', headers)[0], 200)
         self.thread.join(timeout=2)
         self.assertFalse(self.thread.is_alive())
+
+
+class BrowserLaunchTests(unittest.TestCase):
+    def test_windows_prefers_edge_without_using_default_browser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in ('Microsoft/Edge/Application/msedge.exe', 'Google/Chrome/Application/chrome.exe'):
+                path = root / relative
+                path.parent.mkdir(parents=True)
+                path.touch()
+            with patch.dict(app.os.environ, {'ProgramFiles': directory}, clear=True), \
+                    patch.object(app.sys, 'platform', 'win32'), \
+                    patch.object(app.subprocess, 'Popen') as launch, \
+                    patch.object(app.webbrowser, 'open') as default:
+                app.open_app_browser('http://127.0.0.1:8765')
+                launch.assert_called_once_with([str(root / 'Microsoft/Edge/Application/msedge.exe'),
+                                               '--new-window', 'http://127.0.0.1:8765'])
+                default.assert_not_called()
+
+    def test_chrome_is_tried_if_edge_cannot_launch(self):
+        with patch.object(app.sys, 'platform', 'win32'), \
+                patch.object(app, 'supported_browser_paths', return_value=[Path('edge.exe'), Path('chrome.exe')]), \
+                patch.object(app.subprocess, 'Popen', side_effect=[OSError('Unavailable'), None]) as launch:
+            app.open_app_browser('http://127.0.0.1:8765')
+            self.assertEqual(launch.call_count, 2)
+            self.assertEqual(launch.call_args.args[0][0], 'chrome.exe')
+
+    def test_missing_supported_browser_is_actionable_and_does_not_open_firefox(self):
+        with patch.object(app.sys, 'platform', 'win32'), \
+                patch.object(app, 'supported_browser_paths', return_value=[]), \
+                patch.object(app.webbrowser, 'open') as default:
+            with self.assertRaisesRegex(RuntimeError, 'Edge / Chrome'):
+                app.open_app_browser('http://127.0.0.1:8765')
+            default.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -20,7 +20,7 @@
       <div class="workspace">
         <section class="preview-panel" aria-label="カメラプレビュー">
           <div class="panel-heading"><span><span id="live-dot" class="dot off"></span><span id="camera-state">カメラ停止中</span></span><span id="resolution">— × —</span></div>
-          <div class="stage" id="stage">
+          <div class="stage" id="stage" tabindex="-1" aria-label="カメラ映像と演出">
             <div class="video-stack mirrored" id="video-stack"><video id="video" autoplay muted playsinline aria-label="選択したカメラの映像"></video><canvas id="landmarks" aria-hidden="true"></canvas></div>
             <div id="placeholder" class="placeholder"><div class="camera-icon" aria-hidden="true">◉</div><h2>まずは、カメラをつなごう。</h2><p>右側から使うカメラを選び、<br>「カメラを開始」を押してください。</p><span class="placeholder-note">映像はこの PC の外へ送信されません。</span></div>
             <div id="media-background" class="media-background" aria-hidden="true" hidden></div>
@@ -128,6 +128,17 @@
           <p id="mask-help" class="helper">検出中の中指に追従します。両手にも対応。動画は無音ループ、画像は静止画で、透過部分には下地が付きます。「演出を試す」で中央にプレビューできます。</p>
           <button id="preview-effect" class="text-button" type="button">演出を試す</button>
           <p class="helper">お試しではカメラを使わず、カウントも増えません。設定と入力内容はこのページ内だけで使用し、再読み込みするとリセットされます。</p>
+          <hr>
+          <div class="section-label"><span>05</span> OBS ウィンドウキャプチャ</div>
+          <label for="capture-ratio">出力の縦横比</label>
+          <select id="capture-ratio" aria-describedby="capture-help">
+            <option value="wide">16:9（横長）</option>
+            <option value="standard">4:3</option>
+            <option value="square">1:1（正方形）</option>
+          </select>
+          <p id="capture-help" class="helper">映像と演出だけを表示します。比率が合わない部分は黒い余白になります。設定や警告は表示されないため、カメラと検出の状態を確認してから切り替えてください。</p>
+          <button id="enter-capture" type="button" aria-describedby="capture-exit-help">OBS用表示に切り替え</button>
+          <p id="capture-exit-help" class="helper">Esc キーまたは映像のダブルクリックで設定に戻ります。専用のブラウザーウィンドウで開き、最小化や別タブへの切り替えを避けてください。OBSではこのウィンドウを取り込みます。</p>
         </aside>
       </div>
       <div class="bottom-grid">

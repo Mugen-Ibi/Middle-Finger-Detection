@@ -3,6 +3,9 @@ import { GestureGate, isMiddleFinger } from './gesture.js';
 import { Celebration, messages } from './celebration.js';
 import { MediaBackground } from './background.js';
 import { FingerMask } from './mask.js';
+import { initCaptureMode } from './capture.js';
+
+initCaptureMode();
 
 const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('landmarks'), context = overlay.getContext('2d');
@@ -25,7 +28,8 @@ let worker, modelReady = false, modelTimer, workerTimer, inFlight = null, reques
 let frameHandle, frameCount = 0, lastFrameAt = 0, lastSampleAt = 0, darkSince = null;
 let fpsAt = 0, fpsFrames = 0, cameraName = '', lastError = '', modelStatus = '準備中';
 let partyCount = 0, sessionToken = null, heartbeat;
-const supportsCamera = Boolean(navigator.mediaDevices?.getUserMedia && video.requestVideoFrameCallback);
+const isFirefox = /Firefox\//.test(navigator.userAgent);
+const supportsCamera = !isFirefox && Boolean(navigator.mediaDevices?.getUserMedia && video.requestVideoFrameCallback);
 const camera = new CameraController(navigator.mediaDevices, () => {
   stopCamera();
   message('カメラとの接続が切れました。接続を確認して、もう一度開始してください。', 'error');
@@ -35,6 +39,7 @@ function message(text, kind = '') { $('message').textContent = text; $('message'
 function diagnostics() {
   $('diagnostics').textContent = [
     'Gesture Party 2.0 / Browser Camera API',
+    `ブラウザー: ${navigator.userAgent}`,
     `カメラ: ${cameraName || '未接続'}`,
     `映像: ${active ? `${video.videoWidth} × ${video.videoHeight}` : '停止中'}`,
     `受信フレーム: ${frameCount}`,
@@ -116,7 +121,13 @@ async function startCamera() {
     message('映像を受信しています。手全体をカメラに向けてください。', 'good');
     controls();
     frameHandle = video.requestVideoFrameCallback((now, metadata) => onFrame(current, now, metadata));
-    await refreshDevices();
+    try { await refreshDevices(); }
+    catch (error) {
+      if (current !== session || !active) return;
+      lastError = `Device list: ${error.name}: ${error.message}`;
+      message('映像は受信中ですが、カメラ一覧を更新できません。「一覧を更新」で再試行できます。', 'error');
+      diagnostics();
+    }
   } catch (error) {
     if (current !== session) return;
     stopCamera(); lastError = `${error.name}: ${error.message}`;
@@ -348,7 +359,8 @@ setInterval(() => {
   }
 }, 1000);
 
-if (!supportsCamera) message('このブラウザーは対応していません。最新の Microsoft Edge または Google Chrome で開いてください。', 'error');
+if (isFirefox) message('Firefox は対応対象外です。このページの URL を Microsoft Edge または Google Chrome で開いてください。', 'error');
+else if (!supportsCamera) message('このブラウザーは対応していません。最新の Microsoft Edge または Google Chrome で開いてください。', 'error');
 else refreshDevices().catch(error => message(cameraError(error), 'error'));
 controls(); initModel(); diagnostics();
 fetch('/api/session').then(r => r.json()).then(data => {
