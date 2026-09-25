@@ -45,6 +45,9 @@
           <div class="status-row"><span>認識モデル</span><strong id="model-state">準備中</strong></div>
           <div class="status-row"><span>手の検出</span><strong id="hand-state">待機中</strong></div>
           <div class="status-row"><span>ジェスチャー</span><strong id="gesture-state">待機中</strong></div>
+          <div class="status-row"><span>認識速度</span><strong id="inference-fps">0.0 回/秒</strong></div>
+          <label for="inference-rate">認識頻度の上限</label>
+          <select id="inference-rate"><option value="30">30回/秒（標準）</option><option value="15">15回/秒（負荷を抑える）</option></select>
           <button id="retry-model" class="text-button" type="button" hidden>認識モデルを再読み込み</button>
           <hr>
           <label class="toggle"><input id="mirror" type="checkbox" checked><span>鏡のように左右反転</span></label>

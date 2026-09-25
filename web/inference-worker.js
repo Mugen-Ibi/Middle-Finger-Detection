@@ -16,8 +16,11 @@ self.onmessage = async ({ data }) => {
   } else if (data.type === 'frame') {
     try {
       if (!model) throw new Error('Model is not ready');
+      const started = performance.now();
       const result = model.detectForVideo(data.frame, data.timestamp);
+      const inferenceMs = performance.now() - started;
       self.postMessage({ type: 'result', generation: data.generation, id: data.id,
+        epoch: data.epoch, timestamp: data.timestamp, inferenceMs,
         landmarks: result.landmarks, worldLandmarks: result.worldLandmarks });
     } catch (error) { self.postMessage({ type: 'error', message: error.message }); }
     finally { data.frame.close(); }

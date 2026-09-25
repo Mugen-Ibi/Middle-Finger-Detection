@@ -4,6 +4,7 @@ import { Celebration, messages } from './celebration.js';
 import { MediaBackground } from './background.js';
 import { FingerMask } from './mask.js';
 import { initCaptureMode } from './capture.js';
+import { FrameScheduler, InferenceMetrics, MAX_RESULT_AGE_MS } from './inference.js';
 
 initCaptureMode();
 
@@ -28,6 +29,9 @@ let worker, modelReady = false, modelTimer, workerTimer, inFlight = null, reques
 let frameHandle, frameCount = 0, lastFrameAt = 0, lastSampleAt = 0, darkSince = null;
 let fpsAt = 0, fpsFrames = 0, cameraName = '', lastError = '', modelStatus = '準備中';
 let partyCount = 0, sessionToken = null, heartbeat;
+let inferenceEpoch = 0, overlayDirty = false;
+const metrics = new InferenceMetrics();
+const scheduler = new FrameScheduler(submitFrame);
 const isFirefox = /Firefox\//.test(navigator.userAgent);
 const supportsCamera = !isFirefox && Boolean(navigator.mediaDevices?.getUserMedia && video.requestVideoFrameCallback);
 const camera = new CameraController(navigator.mediaDevices, () => {
@@ -37,13 +41,19 @@ const camera = new CameraController(navigator.mediaDevices, () => {
 
 function message(text, kind = '') { $('message').textContent = text; $('message').className = `message ${kind}`; }
 function diagnostics() {
+  const summary = metrics.summary();
+  const times = value => value.median === null ? '— ms' : `${Math.round(value.median)} / ${Math.round(value.p95)} ms`;
   $('diagnostics').textContent = [
-    'Gesture Party 2.0 / Browser Camera API',
+    'Gesture Party 2.0.0-beta.5 / Browser Camera API',
     `ブラウザー: ${navigator.userAgent}`,
     `カメラ: ${cameraName || '未接続'}`,
     `映像: ${active ? `${video.videoWidth} × ${video.videoHeight}` : '停止中'}`,
     `受信フレーム: ${frameCount}`,
     `認識モデル: ${modelStatus}`,
+    `認識速度: ${summary.fps.toFixed(1)} 回/秒（上限 ${scheduler.fps} 回/秒、直近5秒）`,
+    `推論時間: ${times(summary.inference)}（中央値 / p95）`,
+    `フレーム受信から結果反映: ${times(summary.latency)}（中央値 / p95）`,
+    `古い結果の破棄: ${summary.dropped} 件（直近5秒）`,
     `状態: ${$('message').textContent}`,
     `詳細: ${lastError || 'エラーなし'}`,
     '映像・音声・機器 ID は診断情報に含みません。',
@@ -57,6 +67,7 @@ function controls() {
   $('camera-select').disabled = starting || closed;
   $('refresh').disabled = starting || closed;
   $('effect-select').disabled = closed;
+  $('inference-rate').disabled = closed;
   $('preview-effect').disabled = closed;
   for (const id of ['message-mode', 'message-preset', 'custom-title', 'custom-subtitle']) $(id).disabled = closed;
   for (const id of ['background-mode', 'background-file', 'background-fit', 'clear-background']) $(id).disabled = closed;
@@ -74,9 +85,19 @@ async function refreshDevices() {
   if (devices.some(d => d.deviceId === selected)) $('camera-select').value = selected;
 }
 
-function clearOverlay() { context.clearRect(0, 0, overlay.width, overlay.height); }
+function updateMetrics() { $('inference-fps').textContent = `${metrics.summary().fps.toFixed(1)} 回/秒`; }
+function invalidateInference(cancelInFlight = false) {
+  inferenceEpoch++;
+  scheduler.reset({ cancelInFlight });
+  metrics.reset(); updateMetrics();
+}
+function clearOverlay() {
+  if (!overlayDirty) return;
+  context.clearRect(0, 0, overlay.width, overlay.height); overlayDirty = false;
+}
 function stopCamera() {
   session++;
+  invalidateInference();
   camera.stop();
   if (frameHandle !== undefined) video.cancelVideoFrameCallback?.(frameHandle);
   frameHandle = undefined;
@@ -154,29 +175,47 @@ function onFrame(current, now) {
     $('image-warning').textContent = muted ? 'カメラからの映像が一時停止しています。接続元の機器を確認してください。'
       : '映像は届いていますが、ほぼ黒です。選択したカメラ・カメラカバー・スマートフォン側の映像を確認してください。';
   }
-  if (modelReady && !paused && inFlight === null && !document.hidden) submitFrame(current, now);
+  if (modelReady && !paused && !document.hidden) {
+    scheduler.offer({ generation: current, epoch: inferenceEpoch, timestamp: now });
+  }
   frameHandle = video.requestVideoFrameCallback((time, metadata) => onFrame(current, time, metadata));
 }
 
-async function submitFrame(generation, timestamp) {
+function finishFrame(request) {
+  if (inFlight === request) { inFlight = null; clearTimeout(workerTimer); }
+  scheduler.complete(request);
+}
+function currentRequest(request) {
+  return request.generation === session && request.epoch === inferenceEpoch && active && !paused && !document.hidden && modelReady;
+}
+async function submitFrame(request) {
+  const { generation, epoch, timestamp } = request;
   const id = ++requestId, target = worker;
-  inFlight = id;
+  request.id = id;
+  inFlight = request;
+  let frame;
   try {
+    if (!currentRequest(request) || performance.now() - timestamp > MAX_RESULT_AGE_MS) { finishFrame(request); return; }
+    // Include bitmap creation in the timeout, not just the worker round trip.
+    workerTimer = setTimeout(() => {
+      if (inFlight === request) modelFailed('認識処理が応答しません。再読み込みをお試しください。');
+    }, 15000);
     const width = Math.min(video.videoWidth, 640);
-    const frame = await createImageBitmap(video, { resizeWidth: width,
+    frame = await createImageBitmap(video, { resizeWidth: width,
       resizeHeight: Math.max(1, Math.round(video.videoHeight * width / video.videoWidth)) });
-    if (generation !== session || paused || target !== worker || !modelReady) {
-      frame.close(); if (inFlight === id) inFlight = null; return;
+    if (!currentRequest(request) || target !== worker || performance.now() - timestamp > MAX_RESULT_AGE_MS) {
+      frame.close(); finishFrame(request); return;
     }
-    target.postMessage({ type: 'frame', frame, timestamp, generation, id }, [frame]);
-    workerTimer = setTimeout(() => modelFailed('認識処理が応答しません。再読み込みをお試しください。'), 15000);
+    target.postMessage({ type: 'frame', frame, timestamp, generation, epoch, id }, [frame]);
   } catch (error) {
-    if (inFlight === id) inFlight = null;
-    if (generation === session) modelFailed(error.message);
+    frame?.close();
+    if (target === worker && currentRequest(request)) modelFailed(error.message);
+    finishFrame(request);
   }
 }
 
 function modelFailed(detail) {
+  invalidateInference(true);
   gate.reset(); stopScene();
   clearTimeout(modelTimer); clearTimeout(workerTimer);
   worker?.terminate(); worker = null; modelReady = false; inFlight = null;
@@ -187,6 +226,7 @@ function modelFailed(detail) {
   clearOverlay(); controls(); diagnostics();
 }
 function initModel() {
+  invalidateInference(true);
   stopScene();
   clearTimeout(modelTimer); clearTimeout(workerTimer); worker?.terminate();
   modelReady = false; inFlight = null; gate.reset();
@@ -204,19 +244,27 @@ function initModel() {
         modelStatus = '準備完了'; $('model-state').textContent = modelStatus; controls(); diagnostics();
       } else if (data.type === 'error') modelFailed(data.message);
       else if (data.type === 'result') {
-        if (inFlight === data.id) { inFlight = null; clearTimeout(workerTimer); }
-        if (data.generation !== session || !active || paused || document.hidden) return;
-        const hands = data.landmarks.length;
-        $('hand-state').textContent = hands ? `${hands} 手を検出` : '手を探しています';
-        drawLandmarks(data.landmarks);
-        const detected = data.worldLandmarks.some(isMiddleFinger);
-        fingerMask.update(data.landmarks.filter((_, i) => isMiddleFinger(data.worldLandmarks[i])), video.videoWidth, video.videoHeight);
-        $('gesture-state').textContent = detected ? '中指を検出' : '待機中';
-        if (gate.update(detected, performance.now())) { poseActive = true; celebrate(); }
-        if (gate.armed) poseActive = false;
-        syncBackground();
-        clearTimeout(poseWatchdog);
-        poseWatchdog = setTimeout(() => { gate.reset(); poseActive = false; syncBackground(); }, 1200);
+        const request = inFlight;
+        if (!request || request.id !== data.id) return;
+        try {
+          if (!currentRequest(request) || data.generation !== session || data.epoch !== inferenceEpoch) return;
+          const age = performance.now() - request.timestamp;
+          const fresh = age <= MAX_RESULT_AGE_MS;
+          metrics.record(data.inferenceMs, age, fresh);
+          if (!fresh) return;
+          const hands = data.landmarks.length;
+          $('hand-state').textContent = hands ? `${hands} 手を検出` : '手を探しています';
+          drawLandmarks(data.landmarks);
+          const matching = data.worldLandmarks.map(isMiddleFinger);
+          const detected = matching.some(Boolean);
+          fingerMask.update(data.landmarks.filter((_, i) => matching[i]), video.videoWidth, video.videoHeight, request.timestamp);
+          $('gesture-state').textContent = detected ? '中指を検出' : '待機中';
+          if (gate.update(detected, request.timestamp)) { poseActive = true; celebrate(); }
+          if (gate.armed) poseActive = false;
+          syncBackground();
+          clearTimeout(poseWatchdog);
+          poseWatchdog = setTimeout(() => { gate.reset(); poseActive = false; syncBackground(); }, 1200);
+        } finally { finishFrame(request); }
       }
     };
     current.postMessage({ type: 'init' });
@@ -225,10 +273,12 @@ function initModel() {
 
 const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
 function drawLandmarks(hands) {
+  if (!$('show-landmarks').checked) return;
+  if (!hands.length) { clearOverlay(); return; }
   const width = video.videoWidth, height = video.videoHeight;
   if (overlay.width !== width || overlay.height !== height) { overlay.width = width; overlay.height = height; }
   clearOverlay();
-  if (!$('show-landmarks').checked) return;
+  overlayDirty = true;
   context.strokeStyle = '#c4f878'; context.fillStyle = '#eaffd7'; context.lineWidth = Math.max(2, width / 420);
   hands.forEach(points => {
     context.beginPath();
@@ -316,6 +366,7 @@ $('camera-select').onchange = () => {
   if (active) { stopCamera(); message('カメラを変更しました。「カメラを開始」で選択した機器を接続します。'); }
 };
 $('pause').onclick = () => {
+  invalidateInference();
   paused = !paused; gate.reset(); clearOverlay(); stopScene();
   $('hand-state').textContent = paused ? '一時停止中' : '手を探しています'; $('gesture-state').textContent = '待機中';
   controls();
@@ -325,6 +376,7 @@ $('mirror').onchange = () => {
   maskSettings();
 };
 $('show-landmarks').onchange = clearOverlay;
+$('inference-rate').onchange = () => scheduler.setRate(Number($('inference-rate').value));
 $('retry-model').onclick = initModel;
 $('copy-diagnostics').onclick = async () => {
   diagnostics();
@@ -348,12 +400,15 @@ $('quit').onclick = async () => {
 window.addEventListener('pagehide', () => { stopCamera(); background.clear(); fingerMask.media.clear(); worker?.terminate(); clearInterval(heartbeat); });
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 document.addEventListener('visibilitychange', () => {
+  invalidateInference(); clearOverlay();
   gate.reset();
   if (document.hidden) stopScene();
   if (!document.hidden) lastFrameAt = performance.now();
 });
 navigator.mediaDevices?.addEventListener('devicechange', () => refreshDevices().catch(() => {}));
 setInterval(() => {
+  updateMetrics();
+  if (!document.hidden) diagnostics();
   if (active && !document.hidden && performance.now() - lastFrameAt > 10000) {
     stopCamera(); message('映像の更新が止まりました。接続先を確認し、もう一度開始してください。', 'error');
   }

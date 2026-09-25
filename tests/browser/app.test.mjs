@@ -47,6 +47,9 @@ async function pageFor(t, initialize) {
   t.after(() => context.close());
   if (initialize) await initialize(context);
   const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  t.after(() => assert.deepEqual(errors, [], 'unexpected browser errors'));
   await page.goto(url);
   return page;
 }
@@ -238,6 +241,7 @@ async function mockGestures(context) {
       postMessage(data) {
         if (data.type === 'init') { queueMicrotask(() => this.onmessage?.({ data: { type: 'ready' } })); return; }
         data.frame.close();
+        (window.submissions ??= []).push({ id: data.id, epoch: data.epoch, timestamp: data.timestamp });
         const points = Array.from({ length: 21 }, () => ({ x: 0, y: 0, z: 0 }));
         for (const base of [5, 9, 13, 17]) {
           const x = base / 10, extended = base === 9;
@@ -252,8 +256,14 @@ async function mockGestures(context) {
         const images = window.raised ? [imagePoints.map(p => ({ ...p, x: p.x + (window.handOffsetX || 0) }))] : [];
         if (window.raised && window.secondHand) images.push(imagePoints.map(p => ({ ...p, x: p.x + 0.4 })));
         if (window.dropResults) return;
-        setTimeout(() => this.onmessage?.({ data: { type: 'result', generation: data.generation, id: data.id,
-          landmarks: images, worldLandmarks: images.map(() => points) } }), 0);
+        const deliver = () => {
+          (window.delivered ??= []).push(data.id);
+          this.onmessage?.({ data: { type: 'result', generation: data.generation, id: data.id,
+            epoch: data.epoch, timestamp: data.timestamp, inferenceMs: window.resultDelay || 0,
+            landmarks: images, worldLandmarks: images.map(() => points) } });
+        };
+        if (window.holdResults) (window.heldResults ??= []).push(deliver);
+        else setTimeout(deliver, window.resultDelay || 0);
       }
       terminate() { this.onmessage = null; }
     };
@@ -575,4 +585,137 @@ test('custom mask image and video stay local, combine with backgrounds, and stop
   await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 5000 });
   assert.equal(await page.locator('#count').textContent(), '01');
   assert.deepEqual(errors, []);
+});
+
+test('pre-pause and pre-hide results cannot restore a mask after detection resumes', async t => {
+  for (const action of ['pause', 'visibility']) {
+    const page = await pageFor(t, mockGestures);
+    await page.locator('#mask-mode').selectOption('stamp');
+    await page.evaluate(() => { window.raised = true; window.holdResults = true; });
+    await start(page);
+    await page.waitForFunction(() => window.heldResults?.length === 1);
+    await page.evaluate(action => {
+      window.raised = false; window.dropResults = true;
+      if (action === 'pause') {
+        document.getElementById('pause').click(); document.getElementById('pause').click();
+      } else {
+        let hidden = true;
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+        document.dispatchEvent(new Event('visibilitychange'));
+        hidden = false; document.dispatchEvent(new Event('visibilitychange'));
+      }
+      window.heldResults.shift()();
+    }, action);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.locator('#finger-mask').isVisible(), false, action);
+    assert.equal(await page.locator('#count').textContent(), '00');
+    assert.notEqual(await page.locator('#hand-state').textContent(), '1 手を検出');
+    await page.close();
+  }
+});
+
+test('expired results are discarded and reported while the camera continues receiving frames', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#mask-mode').selectOption('stamp');
+  await page.evaluate(() => { window.raised = true; window.holdResults = true; });
+  await start(page);
+  await page.waitForFunction(() => window.heldResults?.length === 1);
+  await page.waitForTimeout(550);
+  await page.evaluate(() => { window.dropResults = true; window.heldResults.shift()(); });
+  await waitText(page, 'diagnostics', '古い結果の破棄: 1 件');
+  assert.equal(await page.locator('#finger-mask').isVisible(), false);
+  assert.equal(await page.locator('#count').textContent(), '00');
+  assert.equal(await page.locator('#inference-fps').textContent(), '0.0 回/秒');
+  await page.waitForFunction(() => /^\d+ fps$/.test(document.getElementById('fps').textContent));
+  assert.match(await page.locator('#fps').textContent(), /\d+ fps/);
+});
+
+test('a bitmap finishing after pause is closed and never sent to the worker', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.evaluate(() => {
+    const original = window.createImageBitmap;
+    window.createImageBitmap = async (...args) => {
+      window.createImageBitmap = original;
+      const bitmap = await original(...args);
+      window.pendingBitmap = bitmap;
+      await new Promise(resolve => { window.releaseBitmap = resolve; });
+      return bitmap;
+    };
+  });
+  await start(page);
+  await page.waitForFunction(() => window.releaseBitmap);
+  await page.evaluate(() => {
+    document.getElementById('pause').click(); document.getElementById('pause').click();
+    window.releaseBitmap();
+  });
+  await page.waitForFunction(() => window.submissions?.length > 0);
+  assert.equal(await page.evaluate(() => window.pendingBitmap.width), 0);
+  assert.ok(await page.evaluate(() => window.submissions.every(request => request.id !== 1)));
+});
+
+test('disabled overlays do no canvas work and identical stamps do not repaint on every result', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#show-landmarks').uncheck();
+  await page.evaluate(() => {
+    window.raised = true;
+    window.clears = { 'finger-mask': 0, landmarks: 0 };
+    const original = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function(...args) {
+      if (this.canvas.id in window.clears) window.clears[this.canvas.id]++;
+      return original.apply(this, args);
+    };
+  });
+  await start(page);
+  await waitText(page, 'count', '01');
+  assert.deepEqual(await page.evaluate(() => window.clears), { 'finger-mask': 0, landmarks: 0 });
+  assert.deepEqual(await page.locator('#landmarks').evaluate(canvas => [canvas.width, canvas.height]), [300, 150]);
+  await page.locator('#mask-mode').selectOption('stamp');
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
+  const before = await page.evaluate(() => ({ clears: window.clears['finger-mask'], results: window.delivered.length }));
+  await page.waitForFunction(results => window.delivered.length >= results + 10, before.results);
+  assert.equal(await page.evaluate(() => window.clears['finger-mask']), before.clears);
+  await page.evaluate(() => { window.handOffsetX = 0.1; });
+  await page.waitForFunction(clears => window.clears['finger-mask'] > clears, before.clears);
+  await page.locator('#mask-mode').selectOption('off');
+  await page.locator('#finger-mask').waitFor({ state: 'hidden' });
+  const stopped = await page.evaluate(() => ({ clears: window.clears['finger-mask'], results: window.delivered.length }));
+  await page.waitForFunction(results => window.delivered.length >= results + 5, stopped.results);
+  assert.equal(await page.evaluate(() => window.clears['finger-mask']), stopped.clears);
+});
+
+test('recognition rate limit and timing diagnostics are independent of camera FPS', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#inference-rate').selectOption('15');
+  await start(page);
+  await page.waitForFunction(() => window.submissions?.length > 12);
+  await page.waitForFunction(() => parseFloat(document.getElementById('inference-fps').textContent) > 0);
+  const timestamps = await page.evaluate(() => window.submissions.map(request => request.timestamp));
+  const rate = (timestamps.length - 1) * 1000 / (timestamps.at(-1) - timestamps[0]);
+  assert.ok(rate <= 16, `recognition rate ${rate} exceeded the selected cap`);
+  assert.match(await page.locator('#diagnostics').textContent(), /推論時間: \d+ \/ \d+ ms/);
+  assert.match(await page.locator('#diagnostics').textContent(), /フレーム受信から結果反映: \d+ \/ \d+ ms/);
+  await page.locator('#pause').click();
+  assert.equal(await page.locator('#inference-fps').textContent(), '0.0 回/秒');
+});
+
+test('video mask preview redraws for video frames without camera or inference updates', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#mask-mode').selectOption('media');
+  await page.locator('#mask-file').setInputFiles(await backgroundFile(page, 'video'));
+  await waitText(page, 'mask-status', '動画を選択済み');
+  await page.evaluate(() => {
+    window.videoDraws = 0;
+    const original = CanvasRenderingContext2D.prototype.drawImage;
+    CanvasRenderingContext2D.prototype.drawImage = function(...args) {
+      if (this.canvas.id === 'finger-mask') window.videoDraws++;
+      return original.apply(this, args);
+    };
+  });
+  await page.locator('#preview-effect').click();
+  await page.waitForFunction(() => window.videoDraws >= 3, null, { timeout: 2500 });
+  await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 5000 });
+  const draws = await page.evaluate(() => window.videoDraws);
+  await page.waitForTimeout(150);
+  assert.equal(await page.evaluate(() => window.videoDraws), draws);
+  assert.equal(await page.locator('#mask-source video').evaluate(video => video.paused), true);
 });

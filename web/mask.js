@@ -1,4 +1,5 @@
 import { MediaBackground } from './background.js';
+import { MAX_RESULT_AGE_MS } from './inference.js';
 
 // Map normalized camera landmarks through object-fit: contain, then mirror.
 export function fingerMaskBounds(points, videoWidth, videoHeight, width, height, mirrored = false, size = 1.3) {
@@ -72,38 +73,86 @@ export class FingerMask {
     this.media = new MediaBackground(source, status, 'マスク');
     this.options = { mode: 'off', stamp: 'bar', size: 1.3, mirrored: true };
     this.hands = []; this.updated = 0; this.previewUntil = 0; this.frame = null;
+    this.expiryTimer = null; this.expiresAt = null; this.videoFrame = null; this.lastDrawing = null;
+    this.resizeObserver = new ResizeObserver(() => this.start());
+    this.resizeObserver.observe(canvas.parentElement);
+    window.addEventListener('resize', () => this.start());
+    this.media.motion.addEventListener('change', () => this.start());
   }
 
   configure(options) { Object.assign(this.options, options); this.start(); }
-  update(hands, width, height) {
+  update(hands, width, height, timestamp = performance.now()) {
     this.hands = hands; this.videoWidth = width; this.videoHeight = height;
-    this.updated = performance.now(); this.start();
+    this.updated = timestamp;
+    if (this.options.mode !== 'off') this.start();
   }
   preview() { this.previewUntil = performance.now() + 3000; this.media.hide(); this.start(); }
-  start() { if (this.frame === null) this.draw(performance.now()); }
+  start() {
+    if (this.options.mode === 'off' || (this.options.mode === 'media' && !this.media.asset)) { this.clear(); return; }
+    if (this.frame === null) this.frame = requestAnimationFrame(now => { this.frame = null; this.draw(now); });
+  }
   hide() {
     this.hands = []; this.previewUntil = 0;
     this.clear();
   }
   clear() {
     if (this.frame !== null) cancelAnimationFrame(this.frame);
-    this.frame = null; this.canvas.hidden = true; this.media.hide();
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.cancelVideoFrame();
+    clearTimeout(this.expiryTimer); this.expiryTimer = null; this.expiresAt = null;
+    this.frame = null; this.lastDrawing = null;
+    if (!this.canvas.hidden) {
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.canvas.hidden = true;
+    }
+    if (this.media.visible) this.media.hide();
+  }
+
+  cancelVideoFrame() {
+    if (this.videoFrame) this.videoFrame.source.cancelVideoFrameCallback(this.videoFrame.id);
+    this.videoFrame = null;
+  }
+  watchVideo() {
+    const source = this.options.mode === 'media' && this.media.asset?.kind === 'video' && !this.media.motion.matches
+      ? this.media.asset.element : null;
+    if (this.videoFrame?.source === source) return;
+    this.cancelVideoFrame();
+    if (source) {
+      const id = source.requestVideoFrameCallback(() => { this.videoFrame = null; this.start(); });
+      this.videoFrame = { source, id };
+    }
+  }
+  expireAt(deadline) {
+    if (this.expiresAt === deadline) return;
+    clearTimeout(this.expiryTimer); this.expiresAt = deadline;
+    this.expiryTimer = setTimeout(() => {
+      this.expiryTimer = null; this.expiresAt = null; this.start();
+    }, Math.max(1, deadline - performance.now()));
   }
 
   draw(now) {
     const { canvas, ctx, options } = this;
+    const preview = now < this.previewUntil;
+    if (options.mode === 'off' || (!preview && (!this.hands.length || now - this.updated >= MAX_RESULT_AGE_MS))
+      || (options.mode === 'media' && !this.media.asset)) { this.clear(); return; }
     const width = canvas.parentElement.clientWidth, height = canvas.parentElement.clientHeight;
     let bounds = [];
-    if (now < this.previewUntil) {
+    if (preview) {
       bounds = [{ x: width / 2, y: height / 2, width: height * 0.15 * options.size,
         height: height * 0.5 * options.size, angle: -0.15 }];
-    } else if (now - this.updated < 450) {
+    } else {
       bounds = this.hands.map(points => fingerMaskBounds(points, this.videoWidth, this.videoHeight, width, height, options.mirrored, options.size)).filter(Boolean);
     }
-    if (options.mode === 'off' || !bounds.length || (options.mode === 'media' && !this.media.asset)) { this.clear(); return; }
-    if (options.mode === 'media') this.media.show(); else this.media.hide();
+    if (!bounds.length) { this.clear(); return; }
+    if (options.mode === 'media') this.media.show(); else if (this.media.visible) this.media.hide();
+    this.expireAt(preview ? this.previewUntil : this.updated + MAX_RESULT_AGE_MS);
+    this.watchVideo();
     const ratio = Math.min(devicePixelRatio || 1, 2);
+    const asset = options.mode === 'media' ? this.media.asset : null;
+    const key = JSON.stringify([bounds, width, height, ratio, options.mode, options.stamp,
+      asset?.element.currentTime, asset?.element.readyState]);
+    if (this.lastDrawing?.key === key && this.lastDrawing.asset === asset) return;
+    this.lastDrawing = { key, asset };
     if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
     }
@@ -123,6 +172,5 @@ export class FingerMask {
       }
       ctx.restore();
     }
-    this.frame = requestAnimationFrame(time => this.draw(time));
   }
 }
