@@ -721,3 +721,91 @@ test('video mask preview redraws for video frames without camera or inference up
   assert.equal(await page.evaluate(() => window.videoDraws), draws);
   assert.equal(await page.locator('#mask-source video').evaluate(video => video.paused), true);
 });
+
+test('rainbow and all-effects previews draw, tag the banner and never touch the score', async t => {
+  const page = await pageFor(t);
+  const violations = [];
+  page.on('console', message => { if (/Content Security Policy/i.test(message.text())) violations.push(message.text()); });
+  const painted = () => page.waitForFunction(() => {
+    const canvas = document.getElementById('confetti');
+    return canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 === 3 && value > 0);
+  });
+  for (const effect of ['rainbow', 'all']) {
+    await page.locator('#effect-select').selectOption(effect);
+    await page.locator('#preview-effect').click();
+    assert.equal(await page.locator('#celebration').getAttribute('data-effect'), effect);
+    await painted();
+  }
+  await page.locator('#intensity').fill('5');
+  assert.equal(await page.locator('#intensity-value').textContent(), '脳が溶ける');
+  await page.locator('#preview-effect').click();
+  await painted();
+  assert.equal(await page.locator('#score-num').textContent(), '0');
+  assert.equal(await page.locator('#combo-num').textContent(), '×0');
+  assert.equal(await page.locator('#badges li.earned').count(), 0);
+  assert.deepEqual(violations, []);
+});
+
+test('flash and shake play for effects and are skipped for reduced motion or when switched off', async t => {
+  const page = await pageFor(t);
+  const animated = () => page.evaluate(() => ({
+    flash: document.getElementById('flash').getAnimations().length,
+    shake: document.getElementById('video-stack').getAnimations().length,
+  }));
+  await page.locator('#preview-effect').click();
+  assert.deepEqual(await animated(), { flash: 1, shake: 1 });
+  await page.locator('#impact-toggle').uncheck();
+  assert.deepEqual(await animated(), { flash: 0, shake: 0 });
+  await page.locator('#preview-effect').click();
+  assert.deepEqual(await animated(), { flash: 0, shake: 0 });
+  await page.locator('#impact-toggle').check();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#preview-effect').click();
+  assert.deepEqual(await animated(), { flash: 0, shake: 0 });
+});
+
+test('accepted gestures build combo, score, XP and badges; the HUD can be hidden', async t => {
+  const page = await pageFor(t, mockGestures);
+  const violations = [];
+  page.on('console', message => { if (/Content Security Policy/i.test(message.text())) violations.push(message.text()); });
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  assert.equal(await page.locator('#combo-num').textContent(), '×1');
+  assert.equal(await page.locator('#score-num').textContent(), '100');
+  assert.equal(await page.locator('#best-combo').textContent(), '1');
+  assert.equal(await page.locator('#xp-text').textContent(), '100 / 500 XP');
+  assert.equal(await page.locator('#xp-track').getAttribute('aria-valuenow'), '20');
+  assert.equal(await page.locator('#badges li.earned').count(), 1);
+  assert.match(await page.locator('#celebration > span').textContent(), /GESTURE DETECTED/);
+  // Lower the hand long enough to re-arm the gate, then raise it again inside the combo window.
+  await page.evaluate(() => { window.raised = false; });
+  await page.waitForTimeout(900);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '02');
+  assert.equal(await page.locator('#combo-num').textContent(), '×2');
+  assert.equal(await page.locator('#score-num').textContent(), '300');
+  assert.equal(await page.locator('#best-combo').textContent(), '2');
+  assert.match(await page.locator('#celebration > span').textContent(), /COMBO ×2/);
+  assert.equal(await page.locator('#hud-combo').isVisible(), true);
+  await page.locator('#hud-toggle').uncheck();
+  assert.equal(await page.locator('#hud-combo').isVisible(), false);
+  assert.equal(await page.locator('#hud-score').isVisible(), false);
+  await page.locator('#hud-toggle').check();
+  assert.equal(await page.locator('#hud-score').isVisible(), true);
+  await page.locator('#stop').click();
+  // Stopping clears the banner but keeps the session totals.
+  assert.equal(await page.locator('#score-num').textContent(), '300');
+  assert.equal(await page.locator('#toast').isVisible(), false);
+  assert.deepEqual(violations, []);
+});
+
+test('the combo expires on its own while score and count are kept', async t => {
+  const page = await pageFor(t, mockGestures);
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  await page.waitForFunction(() => document.getElementById('combo-num').textContent === '×0', null, { timeout: 8000 });
+  assert.equal(await page.locator('#score-num').textContent(), '100');
+  assert.equal(await page.locator('#count').textContent(), '01');
+});

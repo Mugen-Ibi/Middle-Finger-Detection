@@ -29,7 +29,7 @@ export function fingerMaskBounds(points, videoWidth, videoHeight, width, height,
 function stamp(ctx, type, width, height) {
   ctx.fillStyle = '#151b21'; ctx.fillRect(-width / 2, -height / 2, width, height);
   if (type === 'mosaic') {
-    const cell = width / 4, colors = ['#243549', '#59768e', '#91aabb', '#d0dce3'];
+    const cell = width / 4, colors = ['#ff2e93', '#27f0ff', '#ffe534', '#a98bff'];
     for (let y = 0; y < height / cell; y++) for (let x = 0; x < 4; x++) {
       ctx.fillStyle = colors[(x * 3 + y * 7) % colors.length];
       ctx.fillRect(-width / 2 + x * cell, -height / 2 + y * cell, cell + 1, cell + 1);
@@ -37,12 +37,12 @@ function stamp(ctx, type, width, height) {
     return;
   }
   if (type === 'bar') {
-    ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#fff';
+    ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#ffe534';
     ctx.font = `bold ${Math.min(width * 0.27, height / 7)}px sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('CENSORED', 0, 0); return;
   }
   const radius = Math.min(width * 0.4, height * 0.35);
-  ctx.fillStyle = type === 'heart' ? '#ff7ca9' : '#ffe18a';
+  ctx.fillStyle = type === 'heart' ? '#ff2e93' : '#ffe534';
   ctx.beginPath();
   if (type === 'star') {
     for (let i = 0; i < 10; i++) {
@@ -61,7 +61,7 @@ function stamp(ctx, type, width, height) {
     ctx.strokeStyle = '#151b21'; ctx.lineWidth = radius * 0.1;
     ctx.beginPath(); ctx.arc(0, 0, radius * 0.55, 0.15, Math.PI - 0.15); ctx.stroke();
   } else {
-    ctx.strokeStyle = '#ff7782'; ctx.lineWidth = radius * 0.2;
+    ctx.strokeStyle = '#ff2e4d'; ctx.lineWidth = radius * 0.2;
     ctx.arc(0, 0, radius * 0.85, 0, Math.PI * 2);
     ctx.moveTo(-radius * 0.6, radius * 0.6); ctx.lineTo(radius * 0.6, -radius * 0.6); ctx.stroke();
   }

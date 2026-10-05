@@ -1,6 +1,8 @@
 import { CameraController, cameraError, isDarkRGBA } from './camera.js';
 import { GestureGate, isMiddleFinger } from './gesture.js';
 import { Celebration, messages } from './celebration.js';
+import { Progress, BADGES } from './progress.js';
+import { Sfx, Impact } from './feedback.js';
 import { MediaBackground } from './background.js';
 import { FingerMask } from './mask.js';
 import { initCaptureMode } from './capture.js';
@@ -15,6 +17,10 @@ sample.width = 64; sample.height = 48;
 const sampleContext = sample.getContext('2d', { willReadFrequently: true });
 const gate = new GestureGate();
 const party = new Celebration($('celebration'), $('confetti'));
+const progress = new Progress();
+const sfx = new Sfx();
+// The flash covers the stage; shake moves the picture layers but never the stage box or the banner text.
+const impact = new Impact($('flash'), [$('video-stack'), $('media-background'), $('finger-mask'), $('confetti')]);
 const background = new MediaBackground($('media-background'), (text, error = false) => {
   $('background-status').textContent = text;
   $('background-status').classList.toggle('error', error);
@@ -69,6 +75,7 @@ function controls() {
   $('effect-select').disabled = closed;
   $('inference-rate').disabled = closed;
   $('preview-effect').disabled = closed;
+  for (const id of ['intensity', 'sound-toggle', 'impact-toggle', 'hud-toggle']) $(id).disabled = closed;
   for (const id of ['message-mode', 'message-preset', 'custom-title', 'custom-subtitle']) $(id).disabled = closed;
   for (const id of ['background-mode', 'background-file', 'background-fit', 'clear-background']) $(id).disabled = closed;
   for (const id of ['mask-mode', 'mask-stamp', 'mask-file', 'mask-size', 'clear-mask']) $(id).disabled = closed;
@@ -290,13 +297,79 @@ function drawLandmarks(hands) {
 
 function celebrate() {
   partyCount++; $('count').textContent = String(partyCount).padStart(2, '0');
-  party.play(partyOptions());
+  const options = partyOptions();
+  const result = progress.record(performance.now(), { allEffects: options.effect === 'all' });
+  party.play({ ...options, combo: result.combo });
+  impact.hit(Math.min(5, options.intensity + (result.combo >= 5 ? 1 : 0)));
+  sfx.hit(result.combo);
+  renderProgress();
+  announce(result);
 }
 
 function partyOptions() {
   return { effect: $('effect-select').value, mode: $('message-mode').value,
-    preset: Number($('message-preset').value), title: $('custom-title').value, subtitle: $('custom-subtitle').value };
+    preset: Number($('message-preset').value), title: $('custom-title').value, subtitle: $('custom-subtitle').value,
+    intensity: Number($('intensity').value) };
 }
+
+// HUD, level and badges.
+const INTENSITY_LABELS = ['ほんのり', 'ふつう', '濃いめ', '激濃', '脳が溶ける'];
+let comboFrame = null, toastQueue = [], toastTimer = null;
+const badgeItems = new Map(BADGES.map(badge => {
+  const item = document.createElement('li'), name = document.createElement('b'), hint = document.createElement('span');
+  name.textContent = badge.label; hint.textContent = badge.hint;
+  item.append(name, hint); $('badges').append(item);
+  return [badge.id, item];
+}));
+function renderProgress() {
+  $('combo-num').textContent = `×${progress.combo}`;
+  $('score-num').textContent = progress.score.toLocaleString('ja-JP');
+  $('best-combo').textContent = String(progress.best);
+  $('level-num').textContent = String(progress.level);
+  $('xp-text').textContent = `${progress.xp} / ${progress.xpNeeded} XP`;
+  const percent = Math.round(progress.xp / progress.xpNeeded * 100);
+  $('xp-bar').style.width = `${percent}%`;
+  $('xp-track').setAttribute('aria-valuenow', String(percent));
+  for (const [id, item] of badgeItems) item.classList.toggle('earned', progress.badges.has(id));
+  $('badge-total').textContent = `${progress.badges.size}/${BADGES.length}`;
+  startComboLoop();
+}
+function comboTick() {
+  comboFrame = null;
+  const now = performance.now();
+  if (progress.expire(now)) $('combo-num').textContent = '×0';
+  $('combo-bar').style.transform = `scaleX(${progress.comboRemaining(now).toFixed(3)})`;
+  if (progress.combo > 0) comboFrame = requestAnimationFrame(comboTick);
+}
+function startComboLoop() { if (comboFrame === null) comboFrame = requestAnimationFrame(comboTick); }
+
+function announce({ levelsGained, newBadges }) {
+  const items = [
+    ...levelsGained.map(level => ({ kind: 'level', text: `LEVEL UP!  LV ${level}` })),
+    ...newBadges.map(badge => ({ kind: 'badge', text: `バッジ獲得: ${badge.label}` })),
+  ];
+  if (!items.length) return;
+  toastQueue.push(...items);
+  toastTimer ??= setTimeout(nextToast, 600);
+}
+function nextToast() {
+  const item = toastQueue.shift(), toast = $('toast');
+  if (!item) { toastTimer = null; toast.hidden = true; return; }
+  toast.hidden = false; toast.dataset.kind = item.kind; toast.textContent = item.text;
+  toast.animate([{ opacity: 0 }, { opacity: 1, offset: 0.12 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }], { duration: 1400 });
+  if (item.kind === 'level') { sfx.levelUp(); impact.hit(5); } else sfx.badge();
+  toastTimer = setTimeout(nextToast, 1400);
+}
+function clearToasts() {
+  clearTimeout(toastTimer); toastTimer = null; toastQueue = []; $('toast').hidden = true;
+}
+$('intensity').oninput = () => { $('intensity-value').textContent = INTENSITY_LABELS[Number($('intensity').value) - 1]; };
+$('sound-toggle').onchange = () => { sfx.enabled = $('sound-toggle').checked; sfx.unlock(); };
+$('impact-toggle').onchange = () => { impact.enabled = $('impact-toggle').checked; if (!impact.enabled) impact.cancel(); };
+$('hud-toggle').onchange = () => $('stage').classList.toggle('hud-off', !$('hud-toggle').checked);
+// Browsers start audio only after a gesture; any click or key press unlocks it.
+for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, () => sfx.unlock(), { capture: true });
+renderProgress();
 
 function syncBackground() {
   if ($('background-mode').value === 'media' && (poseActive || backgroundPreviewTimer !== null)) {
@@ -304,7 +377,7 @@ function syncBackground() {
   } else background.hide();
 }
 function stopScene() {
-  party.stop(); poseActive = false;
+  party.stop(); impact.cancel(); clearToasts(); poseActive = false;
   clearTimeout(poseWatchdog); clearTimeout(backgroundPreviewTimer);
   poseWatchdog = backgroundPreviewTimer = null;
   background.hide();
@@ -352,6 +425,7 @@ messageMode();
 $('preview-effect').onclick = () => {
   $('stage').scrollIntoView({ block: 'nearest', behavior: 'instant' });
   party.play({ ...partyOptions(), preview: true });
+  impact.hit(Number($('intensity').value)); sfx.hit(1);
   clearTimeout(backgroundPreviewTimer);
   background.hide();
   backgroundPreviewTimer = setTimeout(() => { backgroundPreviewTimer = null; syncBackground(); }, 3000);
@@ -403,7 +477,7 @@ document.addEventListener('visibilitychange', () => {
   invalidateInference(); clearOverlay();
   gate.reset();
   if (document.hidden) stopScene();
-  if (!document.hidden) lastFrameAt = performance.now();
+  if (!document.hidden) { lastFrameAt = performance.now(); startComboLoop(); }
 });
 navigator.mediaDevices?.addEventListener('devicechange', () => refreshDevices().catch(() => {}));
 setInterval(() => {

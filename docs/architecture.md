@@ -31,7 +31,9 @@
 | `web/inference-worker.js` | 同梱の MediaPipe を読み込み、CPU / WASM で推論 |
 | `web/inference.js` | 最新フレームの送信・頻度制限・性能指標の集計 |
 | `web/gesture.js` | 3D 関節の姿勢判定と時間方向の判定 |
-| `web/celebration.js` | メッセージ選択、4種類の演出、アニメーションの開始・解除 |
+| `web/celebration.js` | メッセージ選択、6種類の演出（おまかせは4種類）、濃度とコンボに応じた粒子数、アニメーションの開始・解除 |
+| `web/progress.js` | コンボ・スコア・XP・レベル・バッジの規則（時刻は呼び出し側から渡す） |
+| `web/feedback.js` | 効果音（Web Audio の合成音）、画面フラッシュ、画面シェイク |
 | `web/background.js` | ローカル画像・動画の読み込み、表示・再生、ファイル参照の解放 |
 | `web/mask.js` | 中指のマスク座標計算、スタンプ描画、画像・動画の追従表示 |
 | `scripts/prepare-assets.mjs` | 依存アセットのコピーとモデル検証 |

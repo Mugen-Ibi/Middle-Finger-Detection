@@ -12,11 +12,11 @@
 <body>
   <div class="shell">
     <header>
-      <a class="brand" href="/" aria-label="Gesture Party ホーム"><span class="brand-mark">✳</span> GESTURE PARTY <span class="version">02</span></a>
+      <a class="brand" href="/" aria-label="Gesture Party ホーム"><span class="brand-mark">✳</span> GESTURE PARTY <span class="version">02</span><span class="edition-badge">DOPAMINE EDITION</span></a>
       <span class="privacy"><span class="dot"></span> PC 内で処理・録画なし</span>
     </header>
     <main>
-      <div class="intro"><div><p class="eyebrow">YOUR HAND. YOUR MOMENT.</p><h1>そのジェスチャーに、<br class="mobile-break">ちょっとした祝福を。</h1><p class="lead">カメラを選んで、手をかざす。それだけ。</p></div><span class="edition">LOCAL CAMERA LAB<br>HAND TRACKING / 02</span></div>
+      <div class="intro"><div><p class="eyebrow">YOUR HAND. YOUR MOMENT.</p><h1>そのジェスチャー、<br class="mobile-break"><em>脳が溶けるほど</em>祝福。</h1><p class="lead">カメラを選んで、手をかざす。コンボをつないで、レベルを上げよう。</p></div><span class="edition">LOCAL CAMERA LAB<br>HAND TRACKING / 02</span></div>
       <div class="workspace">
         <section class="preview-panel" aria-label="カメラプレビュー">
           <div class="panel-heading"><span><span id="live-dot" class="dot off"></span><span id="camera-state">カメラ停止中</span></span><span id="resolution">— × —</span></div>
@@ -28,6 +28,10 @@
             <div id="celebration" class="celebration" role="status" aria-live="polite" aria-atomic="true" hidden><span></span><strong></strong><p></p></div>
             <canvas id="confetti" aria-hidden="true"></canvas>
             <div id="image-warning" class="image-warning" role="status" hidden></div>
+            <div class="hud hud-combo" id="hud-combo" aria-hidden="true"><span class="hud-label">COMBO</span><strong id="combo-num">×0</strong><div class="combo-bar"><i id="combo-bar"></i></div></div>
+            <div class="hud hud-score" id="hud-score" aria-hidden="true"><span class="hud-label">SCORE</span><strong id="score-num">0</strong></div>
+            <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+            <div id="flash" class="flash" aria-hidden="true"></div>
           </div>
           <div class="preview-footer"><span id="active-camera">カメラ未選択</span><span id="fps">— fps</span></div>
         </section>
@@ -79,7 +83,17 @@
             <option value="stars">スターシャワー</option>
             <option value="fireworks">花火</option>
             <option value="rings">ネオンリング</option>
+            <option value="rainbow">レインボー（NEW）</option>
+            <option value="all">全部のせ（NEW）</option>
           </select>
+          <div class="party-fields">
+            <label for="intensity">ドーパミン濃度 <output id="intensity-value" for="intensity">濃いめ</output></label>
+            <input id="intensity" type="range" min="1" max="5" step="1" value="3" aria-describedby="intensity-help">
+            <p id="intensity-help" class="helper">粒の数と画面の揺れの強さが変わります。コンボが続くと、さらに増えます。</p>
+            <label class="toggle"><input id="sound-toggle" type="checkbox" checked><span>効果音を鳴らす（出力のみ・録音なし）</span></label>
+            <label class="toggle"><input id="impact-toggle" type="checkbox" checked><span>フラッシュと画面シェイク</span></label>
+            <label class="toggle"><input id="hud-toggle" type="checkbox" checked><span>コンボとスコアを映像に重ねる</span></label>
+          </div>
           <div class="party-fields">
             <label for="background-mode">ポーズを維持している間の背景</label>
             <select id="background-mode">
@@ -146,7 +160,18 @@
       </div>
       <div class="bottom-grid">
         <section class="how-to"><span class="step-mark">↗</span><div><h2>中指を立てて、少しキープ。</h2><p>他の3本の指を曲げ、手全体をカメラに向けてください。<br>次の祝福は、一度手を戻してから。親指の位置は自由です。</p></div></section>
-        <div class="count-card"><span>祝福カウント</span><strong id="count">00</strong><span>回</span></div>
+        <div class="count-card"><span>祝福カウント</span><strong id="count">00</strong><span>回</span><span class="best-combo">最高コンボ ×<b id="best-combo">0</b></span></div>
+        <section class="progress" aria-label="レベルとバッジ">
+          <div class="level-box">
+            <span class="progress-label">LEVEL</span>
+            <div class="level-row"><strong id="level-num">1</strong><span id="xp-text">0 / 500 XP</span></div>
+            <div class="xp-track" id="xp-track" role="progressbar" aria-label="次のレベルまで" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="xp-bar"></i></div>
+          </div>
+          <div class="badge-box">
+            <span class="progress-label">BADGES <b id="badge-total"></b></span>
+            <ul class="badges" id="badges"></ul>
+          </div>
+        </section>
       </div>
       <details><summary>映らないとき・診断情報</summary><p>Windows カメラや会議アプリを閉じ、使用する機器を選び直してください。内蔵カメラとスマートフォンのカメラは別の機器です。スマートフォンを使う場合は、スマートフォン側の接続・カメラ許可も確認してください。</p><p>診断情報にはカメラ名とエラー文が含まれます。公開する前に、個別の機器名やパスを削除してください。</p><pre id="diagnostics">初期化中</pre><button id="copy-diagnostics" class="text-button" type="button">診断情報をコピー</button></details>
     </main>
