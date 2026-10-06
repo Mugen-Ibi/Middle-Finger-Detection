@@ -70,3 +70,18 @@ test('reset returns to the first level with no badges', () => {
   progress.reset();
   assert.deepEqual([progress.count, progress.score, progress.level, progress.combo, progress.badges.size], [0, 0, 1, 0, 0]);
 });
+
+test('maximum mode doubles score and XP and earns its own badge once', () => {
+  const progress = new Progress();
+  const first = progress.record(0, { max: true });
+  assert.equal(first.gain, 200);
+  assert.equal(progress.score, 200);
+  assert.equal(progress.xp, 200);
+  assert.deepEqual(first.newBadges.map(b => b.id).sort(), ['first', 'max']);
+  const second = progress.record(1000, { max: true });
+  assert.equal(second.gain, 400);
+  assert.equal(second.newBadges.some(b => b.id === 'max'), false);
+  assert.equal(progress.record(2000).gain, 300);
+  progress.reset();
+  assert.equal(progress.usedMax, false);
+});

@@ -61,34 +61,41 @@ export class Celebration {
   }
 
   // intensity: 1 to 5. combo adds a few more particles per chained gesture.
-  play({ effect = 'random', mode = 'random', preset = 0, title = '', subtitle = '', preview = false, intensity = 3, combo = 1 } = {}) {
+  play({ effect = 'random', mode = 'random', preset = 0, title = '', subtitle = '', preview = false, intensity = 3, combo = 1, max = false } = {}) {
     this.stop();
     this.effect = effectNames.includes(effect) ? effect : this.nextEffect();
+    // Maximum Dopamine Mode always plays every effect, in three waves.
+    if (max) this.effect = 'all';
     let text;
     if (mode === 'custom') text = [title.trim().slice(0, 60) || 'GESTURE DETECTED!', subtitle.trim().slice(0, 100)];
     else if (mode === 'preset') text = messages[preset] || messages[0];
     else text = this.nextMessage();
     this.banner.classList.toggle('long-text', text[0].length > 24 || text[1].length > 60);
     this.banner.dataset.effect = this.effect;
+    this.banner.dataset.max = max ? 'true' : 'false';
     this.banner.dataset.combo = combo >= 10 ? 'max' : combo >= 5 ? 'high' : combo >= 2 ? 'chain' : 'none';
-    this.banner.querySelector('span').textContent = preview ? 'EFFECT PREVIEW' : combo >= 2 ? `COMBO ×${combo}` : 'GESTURE DETECTED';
+    this.banner.querySelector('span').textContent = preview ? 'EFFECT PREVIEW'
+      : max ? (combo >= 2 ? `MAX DOPAMINE ×${combo}` : 'MAX DOPAMINE')
+      : combo >= 2 ? `COMBO ×${combo}` : 'GESTURE DETECTED';
     this.banner.querySelector('strong').textContent = text[0];
     this.banner.querySelector('p').textContent = text[1];
     this.banner.hidden = false;
     this.started = performance.now();
     const level = INTENSITY[Math.min(Math.max(Math.round(intensity), 1), 5) - 1];
     const bonus = 1 + Math.min(Math.max(combo - 1, 0), 6) * 0.12;
-    const share = this.effect === 'all' ? 0.55 : 1;
-    const count = Math.min(240, Math.round(64 * level * bonus * share));
-    this.layers = (this.effect === 'all' ? [...effects, 'rainbow'] : [this.effect]).map(name => ({
-      name,
-      particles: Array.from({ length: name === 'rings' ? 0 : count }, (_, i) => ({
+    const share = max ? 0.4 : this.effect === 'all' ? 0.55 : 1;
+    const names = this.effect === 'all' ? [...effects, 'rainbow'] : [this.effect];
+    // Later waves are smaller so the frame rate holds up.
+    const waves = max ? [[0, 1], [0.7, 0.6], [1.4, 0.6]] : [[0, 1]];
+    this.layers = waves.flatMap(([delay, size]) => names.map(name => ({ name, delay, size }))).map(({ name, delay, size }) => ({
+      name, delay,
+      particles: Array.from({ length: name === 'rings' ? 0 : Math.min(160, Math.round(64 * level * bonus * share * size)) }, (_, i) => ({
         x: Math.random(), y: Math.random(), angle: Math.random() * Math.PI * 2,
         speed: 0.12 + Math.random() * 0.25, size: 3 + Math.random() * 5,
         color: (palettes[name] || palettes.rings)[i % (palettes[name] || palettes.rings).length], group: i % 3,
         hue: Math.random() * 360,
       })),
-      rings: Math.round(4 * level * (this.effect === 'all' ? 0.7 : 1)),
+      rings: Math.round(4 * level * (this.effect === 'all' ? 0.7 : 1) * size),
     }));
     this.timer = setTimeout(() => this.stop(), DURATION * 1000);
     if (!this.motion.matches) this.draw(this.started);
@@ -122,9 +129,11 @@ export class Celebration {
     const fade = Math.min(1, (DURATION - elapsed) / 0.6);
     const unit = Math.min(width, height);
     for (const layer of this.layers) {
-      if (layer.name === 'rings') this.drawRings(ctx, layer, elapsed, width, height, unit, fade);
-      else if (layer.name === 'rainbow') this.drawRainbow(ctx, layer, elapsed, width, height, unit, fade);
-      else this.drawParticles(ctx, layer, elapsed, width, height, unit, fade);
+      const time = elapsed - layer.delay;
+      if (time < 0) continue;
+      if (layer.name === 'rings') this.drawRings(ctx, layer, time, width, height, unit, fade);
+      else if (layer.name === 'rainbow') this.drawRainbow(ctx, layer, time, width, height, unit, fade);
+      else this.drawParticles(ctx, layer, time, width, height, unit, fade);
     }
     ctx.globalAlpha = 1;
     this.frame = requestAnimationFrame(time => this.draw(time));

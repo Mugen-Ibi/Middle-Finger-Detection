@@ -28,7 +28,7 @@
             <div id="celebration" class="celebration" role="status" aria-live="polite" aria-atomic="true" hidden><span></span><strong></strong><p></p></div>
             <canvas id="confetti" aria-hidden="true"></canvas>
             <div id="image-warning" class="image-warning" role="status" hidden></div>
-            <div class="hud hud-combo" id="hud-combo" aria-hidden="true"><span class="hud-label">COMBO</span><strong id="combo-num">×0</strong><div class="combo-bar"><i id="combo-bar"></i></div></div>
+            <div class="hud hud-combo" id="hud-combo" aria-hidden="true"><span class="hud-label" id="combo-label">COMBO</span><strong id="combo-num">×0</strong><div class="combo-bar"><i id="combo-bar"></i></div></div>
             <div class="hud hud-score" id="hud-score" aria-hidden="true"><span class="hud-label">SCORE</span><strong id="score-num">0</strong></div>
             <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
             <div id="flash" class="flash" aria-hidden="true"></div>
@@ -90,6 +90,8 @@
             <label for="intensity">ドーパミン濃度 <output id="intensity-value" for="intensity">濃いめ</output></label>
             <input id="intensity" type="range" min="1" max="5" step="1" value="3" aria-describedby="intensity-help">
             <p id="intensity-help" class="helper">粒の数と画面の揺れの強さが変わります。コンボが続くと、さらに増えます。</p>
+            <label class="toggle toggle-max"><input id="max-toggle" type="checkbox" aria-describedby="max-help"><span>マキシマムドーパミンモード</span></label>
+            <p id="max-help" class="helper">全エフェクトを3段の波で同時に出し、音・フラッシュ・揺れも最大にします。スコアとXPは2倍。光や揺れに敏感な方は、オフのままでお使いください。</p>
             <label class="toggle"><input id="sound-toggle" type="checkbox" checked><span>効果音を鳴らす（出力のみ・録音なし）</span></label>
             <label class="toggle"><input id="impact-toggle" type="checkbox" checked><span>フラッシュと画面シェイク</span></label>
             <label class="toggle"><input id="hud-toggle" type="checkbox" checked><span>コンボとスコアを映像に重ねる</span></label>

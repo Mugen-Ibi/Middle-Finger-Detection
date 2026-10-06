@@ -77,7 +77,8 @@ function controls() {
   $('effect-select').disabled = closed;
   $('inference-rate').disabled = closed;
   $('preview-effect').disabled = closed;
-  for (const id of ['intensity', 'sound-toggle', 'impact-toggle', 'hud-toggle']) $(id).disabled = closed;
+  for (const id of ['sound-toggle', 'impact-toggle', 'hud-toggle', 'max-toggle']) $(id).disabled = closed;
+  $('intensity').disabled = closed || maxMode();
   for (const id of ['message-mode', 'message-preset', 'custom-title', 'custom-subtitle']) $(id).disabled = closed;
   for (const id of ['background-mode', 'background-file', 'background-fit', 'clear-background']) $(id).disabled = closed;
   for (const id of ['mask-mode', 'mask-stamp', 'mask-file', 'mask-size', 'clear-mask']) $(id).disabled = closed;
@@ -318,10 +319,10 @@ function drawLandmarks(hands) {
 function celebrate() {
   partyCount++; $('count').textContent = String(partyCount).padStart(2, '0');
   const options = partyOptions();
-  const result = progress.record(performance.now(), { allEffects: options.effect === 'all' });
+  const result = progress.record(performance.now(), { allEffects: options.effect === 'all' || options.max, max: options.max });
   party.play({ ...options, combo: result.combo });
-  impact.hit(Math.min(5, options.intensity + (result.combo >= 5 ? 1 : 0)));
-  sfx.hit(result.combo);
+  impact.hit(Math.min(5, options.intensity + (result.combo >= 5 ? 1 : 0)), { max: options.max });
+  sfx.hit(result.combo, { max: options.max });
   renderProgress();
   announce(result);
 }
@@ -329,8 +330,9 @@ function celebrate() {
 function partyOptions() {
   return { effect: $('effect-select').value, mode: $('message-mode').value,
     preset: Number($('message-preset').value), title: $('custom-title').value, subtitle: $('custom-subtitle').value,
-    intensity: Number($('intensity').value) };
+    intensity: maxMode() ? 5 : Number($('intensity').value), max: maxMode() };
 }
+function maxMode() { return $('max-toggle').checked; }
 
 // HUD, level and badges.
 const INTENSITY_LABELS = ['ほんのり', 'ふつう', '濃いめ', '激濃', '脳が溶ける'];
@@ -383,7 +385,13 @@ function nextToast() {
 function clearToasts() {
   clearTimeout(toastTimer); toastTimer = null; toastQueue = []; $('toast').hidden = true;
 }
-$('intensity').oninput = () => { $('intensity-value').textContent = INTENSITY_LABELS[Number($('intensity').value) - 1]; };
+function intensityLabel() { $('intensity-value').textContent = maxMode() ? 'MAX' : INTENSITY_LABELS[Number($('intensity').value) - 1]; }
+$('intensity').oninput = intensityLabel;
+$('max-toggle').onchange = () => {
+  $('stage').classList.toggle('max-on', maxMode());
+  $('combo-label').textContent = maxMode() ? 'MAX COMBO' : 'COMBO';
+  intensityLabel(); controls();
+};
 $('sound-toggle').onchange = () => { sfx.enabled = $('sound-toggle').checked; sfx.unlock(); };
 $('impact-toggle').onchange = () => { impact.enabled = $('impact-toggle').checked; if (!impact.enabled) impact.cancel(); };
 $('hud-toggle').onchange = () => $('stage').classList.toggle('hud-off', !$('hud-toggle').checked);
@@ -445,7 +453,7 @@ messageMode();
 $('preview-effect').onclick = () => {
   $('stage').scrollIntoView({ block: 'nearest', behavior: 'instant' });
   party.play({ ...partyOptions(), preview: true });
-  impact.hit(Number($('intensity').value)); sfx.hit(1);
+  impact.hit(partyOptions().intensity, { max: maxMode() }); sfx.hit(1, { max: maxMode() });
   clearTimeout(backgroundPreviewTimer);
   background.hide();
   backgroundPreviewTimer = setTimeout(() => { backgroundPreviewTimer = null; syncBackground(); }, 3000);

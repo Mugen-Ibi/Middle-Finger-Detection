@@ -905,3 +905,47 @@ test('the combo expires on its own while score and count are kept', async t => {
   assert.equal(await page.locator('#score-num').textContent(), '100');
   assert.equal(await page.locator('#count').textContent(), '01');
 });
+
+test('maximum dopamine mode forces every effect, locks the slider and can be switched off', async t => {
+  const page = await pageFor(t);
+  const violations = [];
+  page.on('console', message => { if (/Content Security Policy/i.test(message.text())) violations.push(message.text()); });
+  await page.locator('#effect-select').selectOption('stars');
+  await page.locator('#max-toggle').check();
+  assert.equal(await page.locator('#stage').evaluate(el => el.classList.contains('max-on')), true);
+  assert.equal(await page.locator('#intensity').isDisabled(), true);
+  assert.equal(await page.locator('#intensity-value').textContent(), 'MAX');
+  assert.equal(await page.locator('#combo-label').textContent(), 'MAX COMBO');
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'all');
+  assert.equal(await page.locator('#celebration').getAttribute('data-max'), 'true');
+  assert.match(await page.locator('#celebration > span').textContent(), /EFFECT PREVIEW/);
+  await page.waitForFunction(() => {
+    const canvas = document.getElementById('confetti');
+    return canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 === 3 && value > 0);
+  });
+  assert.equal(await page.locator('#score-num').textContent(), '0');
+  await page.locator('#max-toggle').uncheck();
+  assert.equal(await page.locator('#stage').evaluate(el => el.classList.contains('max-on')), false);
+  assert.equal(await page.locator('#intensity').isDisabled(), false);
+  assert.equal(await page.locator('#intensity-value').textContent(), '濃いめ');
+  await page.locator('#preview-effect').click();
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'stars');
+  assert.equal(await page.locator('#celebration').getAttribute('data-max'), 'false');
+  assert.deepEqual(violations, []);
+});
+
+test('accepted gestures in maximum mode score double and award the max and all-effects badges', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#max-toggle').check();
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  assert.equal(await page.locator('#score-num').textContent(), '200');
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'all');
+  assert.match(await page.locator('#celebration > span').textContent(), /MAX DOPAMINE/);
+  assert.equal(await page.locator('#badges li.earned').count(), 3);
+  assert.equal(await page.locator('#stage').evaluate(el => getComputedStyle(el).animationName), 'max-glow');
+  await page.locator('#enter-capture').click();
+  assert.equal(await page.locator('#stage').evaluate(el => getComputedStyle(el).boxShadow), 'none');
+});

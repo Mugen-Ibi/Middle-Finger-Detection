@@ -48,11 +48,17 @@ export class Sfx {
   }
 
   // Low thump plus a rising run of notes: the run gets longer with the combo.
-  hit(combo = 1) {
+  hit(combo = 1, { max = false } = {}) {
     this.play(t => {
       this.tone(170, t, 0.28, 'sine', 0.35, 38);
       this.noise(t, 0.2, 0.18);
-      const notes = 3 + Math.min(combo, 6);
+      if (max) {
+        // A second thump, a rising sweep and a longer run of notes.
+        this.tone(120, t + 0.12, 0.3, 'sine', 0.35, 30);
+        this.tone(220, t, 0.5, 'sawtooth', 0.05, 1760);
+        this.noise(t + 0.12, 0.25, 0.14);
+      }
+      const notes = 3 + Math.min(combo, 6) + (max ? 4 : 0);
       for (let i = 0; i < notes; i++) this.tone(frequency(PENTATONIC[i]), t + 0.04 + i * 0.055, 0.2, i % 2 ? 'triangle' : 'square', 0.08);
     });
   }
@@ -75,16 +81,17 @@ export class Impact {
   }
 
   // strength is 1 to 5. Flash and shake are skipped when motion is reduced.
-  hit(strength = 3) {
+  hit(strength = 3, { max = false } = {}) {
     if (!this.enabled || reducedMotion()) return;
     this.cancel();
-    this.animations.push(this.flash.animate([{ opacity: 0.25 + strength * 0.08 }, { opacity: 0 }], { duration: 420, easing: 'ease-out' }));
-    const amplitude = 3 + strength * 2.5;
+    // One flash per hit, never a strobe. Max mode is brighter and longer, not faster.
+    this.animations.push(this.flash.animate([{ opacity: max ? 0.9 : 0.25 + strength * 0.08 }, { opacity: 0 }], { duration: max ? 600 : 420, easing: 'ease-out' }));
+    const amplitude = (3 + strength * 2.5) * (max ? 1.8 : 1);
     const keyframes = Array.from({ length: 9 }, (_, i) => {
       const decay = 1 - i / 8;
       return { translate: i === 8 ? '0px 0px' : `${((Math.random() * 2 - 1) * amplitude * decay).toFixed(1)}px ${((Math.random() * 2 - 1) * amplitude * decay).toFixed(1)}px` };
     });
-    for (const target of this.targets) this.animations.push(target.animate(keyframes, { duration: 360, easing: 'linear' }));
+    for (const target of this.targets) this.animations.push(target.animate(keyframes, { duration: max ? 520 : 360, easing: 'linear' }));
   }
 
   cancel() {
