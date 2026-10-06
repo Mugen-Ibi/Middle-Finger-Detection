@@ -51,6 +51,9 @@ async function pageFor(t, initialize) {
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, [], 'unexpected browser errors'));
   await page.goto(url);
+  // Wait for module initialization before exercising controls; a click on the
+  // initial HTML button can otherwise run before its handler is installed.
+  await page.waitForFunction(() => typeof document.getElementById('start').onclick === 'function');
   return page;
 }
 async function waitText(page, id, text) {
@@ -218,6 +221,7 @@ test('stop is responsive while the permission request is unresolved', async t =>
     navigator.mediaDevices.getUserMedia = () => new Promise(() => {});
   }));
   await page.locator('#start').click();
+  await waitText(page, 'camera-state', '接続しています');
   await page.locator('#stop').click();
   await waitText(page, 'message', 'カメラを停止しました');
   assert.equal(await page.locator('#start').isEnabled(), true);
