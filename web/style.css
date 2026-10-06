@@ -48,7 +48,8 @@ h1 em{font-style:normal;color:var(--sun);text-shadow:0 0 28px #ffe53473}
 .stage{aspect-ratio:16/10;position:relative;isolation:isolate;overflow:hidden;background:#0c0522}
 .video-stack{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 .video-stack.mirrored{transform:scaleX(-1)}
-video,#landmarks{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}
+video,#camera-preview,#landmarks{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}
+#video{opacity:0;pointer-events:none}
 #landmarks{pointer-events:none}
 #confetti{width:100%;height:100%;position:absolute;inset:0;pointer-events:none}
 .placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#ff2e9333,transparent 70%),#170a3d;text-align:center}

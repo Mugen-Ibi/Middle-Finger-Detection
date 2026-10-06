@@ -12,6 +12,7 @@ initCaptureMode();
 
 const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('landmarks'), context = overlay.getContext('2d');
+const preview = $('camera-preview'), previewContext = preview.getContext('2d', { alpha: false });
 const sample = document.createElement('canvas');
 sample.width = 64; sample.height = 48;
 const sampleContext = sample.getContext('2d', { willReadFrequently: true });
@@ -35,6 +36,7 @@ let worker, modelReady = false, modelTimer, workerTimer, inFlight = null, reques
 let frameHandle, frameCount = 0, lastFrameAt = 0, lastSampleAt = 0, darkSince = null;
 let fpsAt = 0, fpsFrames = 0, cameraName = '', lastError = '', modelStatus = '準備中';
 let partyCount = 0, sessionToken = null, heartbeat;
+let deviceListRequest = 0;
 let inferenceEpoch = 0, overlayDirty = false;
 const metrics = new InferenceMetrics();
 const scheduler = new FrameScheduler(submitFrame);
@@ -50,7 +52,7 @@ function diagnostics() {
   const summary = metrics.summary();
   const times = value => value.median === null ? '— ms' : `${Math.round(value.median)} / ${Math.round(value.p95)} ms`;
   $('diagnostics').textContent = [
-    'Gesture Party 2.0.0-beta.6 / Browser Camera API',
+    'Gesture Party 2.0.0-beta.7 / Browser Camera API / Canvas Preview',
     `ブラウザー: ${navigator.userAgent}`,
     `カメラ: ${cameraName || '未接続'}`,
     `映像: ${active ? `${video.videoWidth} × ${video.videoHeight}` : '停止中'}`,
@@ -85,11 +87,18 @@ function controls() {
 
 async function refreshDevices() {
   if (!supportsCamera) return;
-  const selected = camera.stream?.getVideoTracks()[0]?.getSettings().deviceId || $('camera-select').value;
+  const request = ++deviceListRequest;
   const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  if (request !== deviceListRequest || closed) return;
+  // Read the selection after the asynchronous request: the user may have changed it meanwhile.
+  const selected = camera.stream?.getVideoTracks()[0]?.getSettings().deviceId || $('camera-select').value;
+  const selectedLabel = $('camera-select').selectedOptions[0]?.textContent || '選択したカメラ';
   $('camera-select').replaceChildren(new Option('ブラウザーの既定カメラ', ''));
   devices.forEach((device, i) => $('camera-select').add(new Option(device.label || `カメラ ${i + 1}（許可後に名前を表示）`, device.deviceId)));
-  if (devices.some(d => d.deviceId === selected)) $('camera-select').value = selected;
+  if (selected && !devices.some(d => d.deviceId === selected)) {
+    $('camera-select').add(new Option(selectedLabel.replace(/（現在未接続）$/, '') + '（現在未接続）', selected));
+  }
+  $('camera-select').value = selected;
 }
 
 function updateMetrics() { $('inference-fps').textContent = `${metrics.summary().fps.toFixed(1)} 回/秒`; }
@@ -110,6 +119,8 @@ function stopCamera() {
   frameHandle = undefined;
   active = false; starting = false; paused = false;
   video.srcObject = null;
+  previewContext.clearRect(0, 0, preview.width, preview.height);
+  preview.hidden = true;
   gate.reset(); clearOverlay();
   darkSince = null; stopScene();
   $('image-warning').hidden = true;
@@ -144,9 +155,8 @@ async function startCamera() {
     lastFrameAt = fpsAt = performance.now(); lastSampleAt = 0; darkSince = null;
     cameraName = stream.getVideoTracks()[0].label || '選択したカメラ';
     $('active-camera').textContent = cameraName;
-    $('placeholder').hidden = true;
     lastError = '';
-    message('映像を受信しています。手全体をカメラに向けてください。', 'good');
+    message('カメラに接続しました。最初の映像を待っています。');
     controls();
     frameHandle = video.requestVideoFrameCallback((now, metadata) => onFrame(current, now, metadata));
     try { await refreshDevices(); }
@@ -165,6 +175,16 @@ async function startCamera() {
 
 function onFrame(current, now) {
   if (!active || session !== current) return;
+  // Paint received pixels explicitly. Native video compositing can show a blank surface
+  // even while capture and recognition are receiving frames on Windows.
+  const width = video.videoWidth, height = video.videoHeight;
+  if (preview.width !== width || preview.height !== height) { preview.width = width; preview.height = height; }
+  previewContext.drawImage(video, 0, 0, width, height);
+  preview.hidden = false;
+  if (frameCount === 0) {
+    $('placeholder').hidden = true;
+    if (!$('message').classList.contains('error')) message('映像を受信しています。手全体をカメラに向けてください。', 'good');
+  }
   frameCount++; lastFrameAt = now;
   $('camera-state').textContent = '映像を受信中'; $('live-dot').classList.remove('off');
   if (now - fpsAt >= 1000) {

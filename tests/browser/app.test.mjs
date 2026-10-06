@@ -93,6 +93,98 @@ test('permission rejection is explained and start can be retried', async t => {
   assert.equal(await page.locator('#stop').isEnabled(), false);
 });
 
+test('a pending device refresh preserves a camera selected while it was loading', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    const devices = [
+      { kind: 'videoinput', deviceId: 'phone', label: 'Phone camera' },
+      { kind: 'videoinput', deviceId: 'fhd', label: 'FHD Web camera' },
+    ];
+    navigator.mediaDevices.enumerateDevices = () => window.delayDevices
+      ? new Promise(resolve => { window.finishDevices = () => resolve(devices); }) : Promise.resolve(devices);
+  }));
+  await page.locator('#camera-select option[value="fhd"]').waitFor({ state: 'attached' });
+  await page.evaluate(() => { window.delayDevices = true; });
+  await page.locator('#refresh').click();
+  await page.locator('#camera-select').selectOption('fhd');
+  await page.evaluate(() => window.finishDevices());
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#camera-select').inputValue(), 'fhd');
+});
+
+test('received camera pixels are painted visibly even when the native video surface is transparent', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240;
+      const context = canvas.getContext('2d');
+      const paint = () => {
+        context.fillStyle = '#27f0ff'; context.fillRect(0, 0, 160, 240);
+        context.fillStyle = '#ff2e93'; context.fillRect(160, 0, 160, 240);
+      };
+      paint(); setInterval(paint, 50);
+      return canvas.captureStream(20);
+    };
+  }));
+  await start(page);
+  assert.equal(await page.locator('#camera-preview').isVisible(), true);
+  const pixels = await page.locator('#camera-preview').evaluate(canvas => {
+    const context = canvas.getContext('2d');
+    return [context.getImageData(80, 120, 1, 1).data, context.getImageData(240, 120, 1, 1).data].map(data => Array.from(data));
+  });
+  assert.deepEqual(pixels, [[39, 240, 255, 255], [255, 46, 147, 255]]);
+  assert.equal(await page.locator('#video').evaluate(video => getComputedStyle(video).opacity), '0');
+  assert.equal(await page.locator('#placeholder').isVisible(), false);
+  await page.locator('#mirror').uncheck();
+  assert.equal(await page.locator('#video-stack').evaluate(stack => stack.classList.contains('mirrored')), false);
+  await page.locator('#stop').click();
+  assert.equal(await page.locator('#camera-preview').isVisible(), false);
+  await start(page);
+  assert.equal(await page.locator('#camera-preview').isVisible(), true);
+});
+
+test('an older device response cannot overwrite a newer list or silently replace a missing camera', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    window.deviceRequests = [];
+    const devices = [{ kind: 'videoinput', deviceId: 'fhd', label: 'FHD Web camera' }];
+    navigator.mediaDevices.enumerateDevices = () => window.delayDevices
+      ? new Promise(resolve => window.deviceRequests.push(resolve)) : Promise.resolve(devices);
+  }));
+  await page.locator('#camera-select option[value="fhd"]').waitFor({ state: 'attached' });
+  await page.locator('#camera-select').selectOption('fhd');
+  await page.evaluate(() => { window.delayDevices = true; });
+  await page.locator('#refresh').click();
+  await page.locator('#refresh').click();
+  await page.evaluate(() => window.deviceRequests[1]([{ kind: 'videoinput', deviceId: 'phone', label: 'Phone camera' }]));
+  await page.locator('#camera-select option[value="phone"]').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('#camera-select').inputValue(), 'fhd');
+  await page.evaluate(() => window.deviceRequests[0]([{ kind: 'videoinput', deviceId: 'old', label: 'Old camera' }]));
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#camera-select option[value="phone"]').count(), 1);
+  assert.equal(await page.locator('#camera-select option[value="old"]').count(), 0);
+  assert.equal(await page.locator('#camera-select').inputValue(), 'fhd');
+});
+
+test('connection waits for a rendered frame before announcing live video', async t => {
+  const page = await pageFor(t, context => context.addInitScript(() => {
+    const original = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    HTMLVideoElement.prototype.requestVideoFrameCallback = function(callback) {
+      if (this.id === 'video' && !window.releaseFrames) {
+        window.releaseFrames = () => original.call(this, callback);
+        return 0;
+      }
+      return original.call(this, callback);
+    };
+  }));
+  await page.locator('#start').click();
+  await waitText(page, 'message', '最初の映像を待っています');
+  assert.equal(await page.locator('#placeholder').isVisible(), true);
+  assert.equal(await page.locator('#camera-preview').isVisible(), false);
+  assert.notEqual(await page.locator('#camera-state').textContent(), '映像を受信中');
+  await page.evaluate(() => window.releaseFrames());
+  await waitText(page, 'camera-state', '映像を受信中');
+  assert.equal(await page.locator('#placeholder').isVisible(), false);
+  assert.equal(await page.locator('#camera-preview').isVisible(), true);
+});
+
 test('real worker detects hands in the official fixture and rejects open palms as middle fingers', async t => {
   const page = await pageFor(t);
   const image = (await readFile('tests/fixtures/right_hands.jpg')).toString('base64');

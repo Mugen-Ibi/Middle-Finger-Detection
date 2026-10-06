@@ -21,7 +21,7 @@
         <section class="preview-panel" aria-label="カメラプレビュー">
           <div class="panel-heading"><span><span id="live-dot" class="dot off"></span><span id="camera-state">カメラ停止中</span></span><span id="resolution">— × —</span></div>
           <div class="stage" id="stage" tabindex="-1" aria-label="カメラ映像と演出">
-            <div class="video-stack mirrored" id="video-stack"><video id="video" autoplay muted playsinline aria-label="選択したカメラの映像"></video><canvas id="landmarks" aria-hidden="true"></canvas></div>
+            <div class="video-stack mirrored" id="video-stack"><video id="video" autoplay muted playsinline aria-hidden="true"></video><canvas id="camera-preview" role="img" aria-label="選択したカメラの映像" hidden></canvas><canvas id="landmarks" aria-hidden="true"></canvas></div>
             <div id="placeholder" class="placeholder"><div class="camera-icon" aria-hidden="true">◉</div><h2>まずは、カメラをつなごう。</h2><p>右側から使うカメラを選び、<br>「カメラを開始」を押してください。</p><span class="placeholder-note">映像はこの PC の外へ送信されません。</span></div>
             <div id="media-background" class="media-background" aria-hidden="true" hidden></div>
             <canvas id="finger-mask" aria-hidden="true" hidden></canvas>
