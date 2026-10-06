@@ -52,7 +52,7 @@ function diagnostics() {
   const summary = metrics.summary();
   const times = value => value.median === null ? '— ms' : `${Math.round(value.median)} / ${Math.round(value.p95)} ms`;
   $('diagnostics').textContent = [
-    'Gesture Party 2.0.0-beta.7 / Browser Camera API / Canvas Preview',
+    'Gesture Party 2.0.0-beta.8 / Browser Camera API / Canvas Preview',
     `ブラウザー: ${navigator.userAgent}`,
     `カメラ: ${cameraName || '未接続'}`,
     `映像: ${active ? `${video.videoWidth} × ${video.videoHeight}` : '停止中'}`,

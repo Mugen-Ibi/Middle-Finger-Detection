@@ -143,7 +143,14 @@ def open_app_browser(url):
     else:
         for executable in supported_browser_paths():
             try:
-                subprocess.Popen([str(executable), "--new-window", url])
+                # A new window alone reuses the everyday browser process/profile,
+                # including its extensions and a possibly broken capture service.
+                # Keep camera permissions in an app-owned, persistent profile.
+                local_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+                profile = local_data / "GestureParty" / "Browser" / executable.stem
+                profile.mkdir(parents=True, exist_ok=True)
+                subprocess.Popen([str(executable), f"--user-data-dir={profile}",
+                                  "--no-first-run", "--no-default-browser-check", "--new-window", url])
                 return
             except OSError:
                 continue

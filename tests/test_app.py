@@ -96,22 +96,40 @@ class BrowserLaunchTests(unittest.TestCase):
                 path = root / relative
                 path.parent.mkdir(parents=True)
                 path.touch()
-            with patch.dict(app.os.environ, {'ProgramFiles': directory}, clear=True), \
+            with patch.dict(app.os.environ, {'ProgramFiles': directory, 'LOCALAPPDATA': directory}, clear=True), \
                     patch.object(app.sys, 'platform', 'win32'), \
                     patch.object(app.subprocess, 'Popen') as launch, \
                     patch.object(app.webbrowser, 'open') as default:
                 app.open_app_browser('http://127.0.0.1:8765')
+                profile = root / 'GestureParty/Browser/msedge'
                 launch.assert_called_once_with([str(root / 'Microsoft/Edge/Application/msedge.exe'),
+                                               f'--user-data-dir={profile}',
+                                               '--no-first-run', '--no-default-browser-check',
                                                '--new-window', 'http://127.0.0.1:8765'])
+                self.assertTrue(profile.is_dir())
                 default.assert_not_called()
 
     def test_chrome_is_tried_if_edge_cannot_launch(self):
-        with patch.object(app.sys, 'platform', 'win32'), \
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(app.os.environ, {'LOCALAPPDATA': directory}), \
+                patch.object(app.sys, 'platform', 'win32'), \
                 patch.object(app, 'supported_browser_paths', return_value=[Path('edge.exe'), Path('chrome.exe')]), \
                 patch.object(app.subprocess, 'Popen', side_effect=[OSError('Unavailable'), None]) as launch:
             app.open_app_browser('http://127.0.0.1:8765')
             self.assertEqual(launch.call_count, 2)
             self.assertEqual(launch.call_args.args[0][0], 'chrome.exe')
+            self.assertIn(f'--user-data-dir={Path(directory) / "GestureParty/Browser/chrome"}',
+                          launch.call_args.args[0])
+            self.assertNotEqual(launch.call_args_list[0].args[0][1], launch.call_args_list[1].args[0][1])
+
+    def test_profile_failure_never_reuses_the_everyday_browser(self):
+        with patch.object(app.sys, 'platform', 'win32'), \
+                patch.object(app, 'supported_browser_paths', return_value=[Path('msedge.exe')]), \
+                patch.object(app.Path, 'mkdir', side_effect=PermissionError('Profile unavailable')), \
+                patch.object(app.subprocess, 'Popen') as launch:
+            with self.assertRaisesRegex(RuntimeError, 'Edge / Chrome'):
+                app.open_app_browser('http://127.0.0.1:8765')
+            launch.assert_not_called()
 
     def test_missing_supported_browser_is_actionable_and_does_not_open_firefox(self):
         with patch.object(app.sys, 'platform', 'win32'), \
