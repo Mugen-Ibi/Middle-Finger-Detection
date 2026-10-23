@@ -7,3 +7,5 @@
 - **PyInstaller** — GPL 2.0 or later with the bootloader distribution exception. Used to produce the launcher; see [license](https://pyinstaller.org/en/stable/license.html).
 
 Python and its standard library are included in the frozen launcher under the Python Software Foundation License. The application is licensed under the [MIT License](LICENSE); third-party components retain their respective licenses.
+
+- **Additional MediaPipe public gesture fixtures and derived landmarks** — `thumb_up.jpg`, `fist.jpg`, `victory.jpg`, `pointing_up.jpg`, and the derived `datasets/gestures/public-landmarks.jsonl`. Copyright The MediaPipe Authors, Apache License 2.0. Public asset URLs and SHA-256 checksums are listed in [datasets/gestures/manifest.json](datasets/gestures/manifest.json). Used only for tests, excluded from the executable. See [included license](web/MEDIAPIPE_LICENSE.txt).

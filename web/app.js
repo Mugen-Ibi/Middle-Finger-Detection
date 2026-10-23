@@ -1,5 +1,5 @@
 import { CameraController, cameraError, isDarkRGBA } from './camera.js';
-import { GestureGate, isMiddleFinger } from './gesture.js';
+import { GestureGate, classifyGesture, GESTURE_LABELS } from './gesture.js';
 import { Celebration, messages } from './celebration.js';
 import { Progress, BADGES } from './progress.js';
 import { Sfx, Impact } from './feedback.js';
@@ -283,11 +283,15 @@ function initModel() {
           const hands = data.landmarks.length;
           $('hand-state').textContent = hands ? `${hands} 手を検出` : '手を探しています';
           drawLandmarks(data.landmarks);
-          const matching = data.worldLandmarks.map(isMiddleFinger);
-          const detected = matching.some(Boolean);
+          const gestures = data.worldLandmarks.map((points, i) =>
+            classifyGesture(points, data.landmarks[i], video.videoWidth / video.videoHeight));
+          const matching = gestures.map(gesture => gesture === 'middle_finger');
+          const candidates = [...new Set(gestures.filter(Boolean))];
+          // Conflicting gestures from two hands are ambiguous; neither wins by array order.
+          const detected = candidates.length === 1 ? candidates[0] : null;
           fingerMask.update(data.landmarks.filter((_, i) => matching[i]), video.videoWidth, video.videoHeight, request.timestamp);
-          $('gesture-state').textContent = detected ? '中指を検出' : '待機中';
-          if (gate.update(detected, request.timestamp)) { poseActive = true; celebrate(); }
+          $('gesture-state').textContent = detected ? `${GESTURE_LABELS[detected]}を検出` : candidates.length > 1 ? 'ポーズを1種類に揃えてください' : '待機中';
+          if (gate.update(detected, request.timestamp)) { poseActive = true; celebrate(detected); }
           if (gate.armed) poseActive = false;
           syncBackground();
           clearTimeout(poseWatchdog);
@@ -316,9 +320,12 @@ function drawLandmarks(hands) {
   });
 }
 
-function celebrate() {
+function celebrate(gesture) {
   partyCount++; $('count').textContent = String(partyCount).padStart(2, '0');
   const options = partyOptions();
+  if (options.mode === 'random' && gesture && gesture !== 'middle_finger') {
+    Object.assign(options, { mode: 'custom', title: GESTURE_LABELS[gesture], subtitle: 'ジェスチャーを検出しました' });
+  }
   const result = progress.record(performance.now(), { allEffects: options.effect === 'all' || options.max, max: options.max });
   party.play({ ...options, combo: result.combo });
   impact.hit(Math.min(5, options.intensity + (result.combo >= 5 ? 1 : 0)), { max: options.max });

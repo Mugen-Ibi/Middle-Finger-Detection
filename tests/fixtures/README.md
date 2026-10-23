@@ -10,3 +10,7 @@
 See [third-party notices](../../THIRD_PARTY_NOTICES.md). Do not replace this fixture with personal camera images. New fixtures must be synthetic or have a documented public source and an appropriate redistribution basis.
 
 `background.webm` is a synthetic, silent VP8 video created for this project and covered by the repository's MIT License. It contains 12 frames at 10 fps, each 96 × 64 pixels: a solid blue background with a rectangle alternating between orange and green. It was encoded with OpenCV's FFmpeg backend. It contains no camera footage or user files and is not bundled in the executable. Tests use it to verify local video loading, looping, gesture-controlled visibility and playback cleanup; no encoder is needed to run the tests.
+
+## Gesture evaluation fixtures
+
+`thumb_up.jpg`, `fist.jpg`, `victory.jpg`, and `pointing_up.jpg` are additional public MediaPipe test assets (Apache-2.0). Sources and SHA-256 checksums for all five hand images are recorded in [the dataset manifest](../../datasets/gestures/manifest.json). Derived landmark samples retain that attribution. See [evaluation methodology and limitations](../../datasets/gestures/README.md). The images and datasets are excluded from executable builds; no user camera recordings are used.

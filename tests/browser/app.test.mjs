@@ -356,7 +356,8 @@ async function mockGestures(context) {
           (window.delivered ??= []).push(data.id);
           this.onmessage?.({ data: { type: 'result', generation: data.generation, id: data.id,
             epoch: data.epoch, timestamp: data.timestamp, inferenceMs: window.resultDelay || 0,
-            landmarks: images, worldLandmarks: images.map(() => points) } });
+            landmarks: window.testPoses && window.raised ? window.testPoses.map(p => p.image) : window.testPose && window.raised ? images.map(() => window.testPose.image) : images,
+            worldLandmarks: window.testPoses && window.raised ? window.testPoses.map(p => p.world) : images.map(() => window.testPose?.world ?? points) } });
         };
         if (window.holdResults) (window.heldResults ??= []).push(deliver);
         else setTimeout(deliver, window.resultDelay || 0);
@@ -948,4 +949,93 @@ test('accepted gestures in maximum mode score double and award the max and all-e
   assert.equal(await page.locator('#stage').evaluate(el => getComputedStyle(el).animationName), 'max-glow');
   await page.locator('#enter-capture').click();
   assert.equal(await page.locator('#stage').evaluate(el => getComputedStyle(el).boxShadow), 'none');
+});
+
+test('public real-image augmentation benchmark through actual WASM worker', { timeout: 180000 }, async t => {
+  const page = await pageFor(t);
+  const fixtures = await Promise.all(['thumb_up', 'fist', 'victory', 'pointing_up', 'right_hands'].map(async name => ({
+    name, base64: (await readFile(`tests/fixtures/${name}.jpg`)).toString('base64'),
+  })));
+  const results = await page.evaluate(async fixtures => {
+    const { classifyGesture } = await import('/gesture.js');
+    const worker = new Worker('/inference-worker.js');
+    const request = payload => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Worker timeout')), 45000);
+      worker.onerror = e => { clearTimeout(timer); reject(new Error(e.message)); };
+      worker.onmessage = ({ data }) => {
+        clearTimeout(timer);
+        if (data.type === 'error') reject(new Error(data.message)); else resolve(data);
+      };
+      worker.postMessage(payload, payload.frame ? [payload.frame] : []);
+    });
+    const results = [];
+    try {
+      await request({ type: 'init' });
+      let timestamp = 0;
+      for (const fixture of fixtures) {
+        const image = new Image(); image.src = `data:image/jpeg;base64,${fixture.base64}`; await image.decode();
+        const rotations = fixture.name === 'thumb_up' ? [-20, 0, 20, 90, 160, 180, 200, 270] : [-20, 0, 20];
+        for (const rotation of rotations) for (const mirror of [false, true]) for (const brightness of [0.7, 1, 1.3]) {
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
+          const ctx = canvas.getContext('2d'); ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, 512, 512);
+          ctx.translate(256, 256); ctx.rotate(rotation * Math.PI / 180); ctx.scale(mirror ? -1 : 1, 1);
+          ctx.filter = `brightness(${brightness})`;
+          const scale = 380 / Math.max(image.width, image.height);
+          ctx.drawImage(image, -image.width * scale / 2, -image.height * scale / 2, image.width * scale, image.height * scale);
+          const frame = await createImageBitmap(canvas);
+          // This measures a deterministic VIDEO sequence, including the model's tracker.
+          const data = await request({ type: 'frame', frame, timestamp: timestamp += 1000, id: timestamp, generation: 1, epoch: 1 });
+          const predictions = data.worldLandmarks.map((world, i) => classifyGesture(world, data.landmarks[i], 1));
+          const expected = fixture.name === 'thumb_up' && ![90, 270].includes(rotation) ? rotation > 90 ? 'thumbs_down' : 'thumbs_up' : null;
+          results.push({ source: fixture.name, rotation, mirror, brightness, expected, predictions,
+            world: data.worldLandmarks, image: data.landmarks });
+        }
+      }
+    } finally { worker.terminate(); }
+    return results;
+  }, fixtures);
+  const { writeFile } = await import('node:fs/promises');
+  await mkdir('test-results/gestures', { recursive: true });
+  await writeFile('test-results/gestures/real-images.json', JSON.stringify(results, null, 2));
+  const failures = results.filter(r => r.expected ? !r.predictions.includes(r.expected) : r.predictions.some(Boolean));
+  console.log(`Public image benchmark: ${results.length - failures.length}/${results.length}; ${failures.length} failures`);
+  assert.deepEqual(failures.map(({ world, image, ...r }) => r), []);
+});
+
+test('thumbs up and down drive labels, count and background without a middle-finger mask', async t => {
+  const { generateSamples } = await import('../../datasets/gestures/generate.mjs');
+  const samples = [...generateSamples(1, 1)];
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#mask-mode').selectOption('stamp');
+  await chooseBackground(page, await backgroundFile(page));
+  await start(page);
+  for (const [index, label] of ['thumbs_up', 'thumbs_down'].entries()) {
+    const pose = samples.find(s => s.label === label);
+    await page.evaluate(pose => { window.testPose = pose; window.raised = true; }, pose);
+    await waitText(page, 'count', String(index + 1).padStart(2, '0'));
+    await waitText(page, 'gesture-state', label === 'thumbs_up' ? 'いいね！' : 'Bad');
+    assert.equal(await page.locator('#celebration strong').textContent(), label === 'thumbs_up' ? 'いいね！' : 'Bad');
+    assert.equal(await page.locator('#finger-mask').isVisible(), false);
+    assert.equal(await page.locator('#media-background').isVisible(), true);
+    await page.evaluate(() => { window.raised = false; });
+    await page.locator('#media-background').waitFor({ state: 'hidden' });
+  }
+  await page.locator('#stop').click();
+});
+
+test('two conflicting gestures do not trigger until both hands agree', async t => {
+  const { generateSamples } = await import('../../datasets/gestures/generate.mjs');
+  const samples = [...generateSamples(1, 1)];
+  const poses = ['thumbs_up', 'thumbs_down'].map(label => samples.find(s => s.label === label));
+  const page = await pageFor(t, mockGestures);
+  await start(page);
+  await page.evaluate(poses => { window.testPoses = poses; window.raised = true; }, poses);
+  await waitText(page, 'gesture-state', 'ポーズを1種類');
+  const startCount = await page.evaluate(() => window.delivered.length);
+  await page.waitForFunction(n => window.delivered.length >= n + 20, startCount);
+  assert.equal(await page.locator('#count').textContent(), '00');
+  await page.evaluate(() => { window.testPoses[1] = window.testPoses[0]; });
+  await waitText(page, 'count', '01');
+  await waitText(page, 'gesture-state', 'いいね！');
+  await page.locator('#stop').click();
 });
