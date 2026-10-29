@@ -1,4 +1,4 @@
-Gesture Party includes MediaPipe Tasks Vision 1.0.1 and the MediaPipe Hand
+Gesture Party includes MediaPipe Tasks Vision 1.2.0 and the MediaPipe Hand
 Landmarker float16 version-1 model, by Google / The MediaPipe Authors.
 
 MediaPipe is distributed under the Apache License, Version 2.0.

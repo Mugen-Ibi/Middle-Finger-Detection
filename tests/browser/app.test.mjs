@@ -1266,3 +1266,30 @@ test('detection expiry preserves the independent three-second mask preview', asy
   await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 5000 });
   await page.locator('#stop').click();
 });
+
+test('closing after model failure disables recovery and releases synthesized audio', async t => {
+  const page = await pageFor(t, async context => {
+    await context.route('**/api/quit', route => route.fulfill({ json: { ok: true } }));
+    await context.addInitScript(() => {
+      window.workerCreations = 0;
+      window.Worker = class {
+        constructor() { window.workerCreations++; }
+        postMessage() { queueMicrotask(() => this.onmessage?.({ data: { type: 'error', message: 'Synthetic model failure' } })); }
+        terminate() {}
+      };
+      window.audioClosed = 0;
+      window.AudioContext = class {
+        state = 'running';
+        close() { window.audioClosed++; return Promise.resolve(); }
+      };
+    });
+  });
+  await waitText(page, 'model-state', '読み込み失敗');
+  await page.locator('#quit').click();
+  await waitText(page, 'message', '終了しました');
+  assert.equal(await page.locator('#retry-model').isEnabled(), false);
+  assert.equal(await page.locator('#enter-capture').isEnabled(), false);
+  assert.equal(await page.evaluate(() => window.audioClosed), 1);
+  await page.evaluate(() => document.getElementById('retry-model').onclick());
+  assert.equal(await page.evaluate(() => window.workerCreations), 1);
+});

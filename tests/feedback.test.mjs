@@ -17,3 +17,26 @@ test('all combo lengths including maximum mode produce complete, finite rising s
     assert.ok(run.every((tone, i) => i === 0 || tone.frequency > run[i - 1].frequency));
   }
 });
+
+test('disposal closes audio once and prevents later document gestures reopening it', async () => {
+  const sfx = new Sfx();
+  let closed = 0;
+  sfx.context = { state: 'running', close: async () => { closed++; } };
+  assert.equal(sfx.ready, true);
+  sfx.dispose();
+  sfx.dispose();
+  sfx.unlock();
+  await Promise.resolve();
+  assert.equal(closed, 1);
+  assert.equal(sfx.context, null);
+  assert.equal(sfx.ready, false);
+});
+
+test('audio-close rejection stays optional and does not revive the context', async () => {
+  const sfx = new Sfx();
+  sfx.context = { close: async () => { throw new Error('Already closed'); } };
+  sfx.dispose();
+  await Promise.resolve();
+  assert.equal(sfx.context, null);
+  assert.equal(sfx.ready, false);
+});

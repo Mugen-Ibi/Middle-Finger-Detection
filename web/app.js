@@ -74,6 +74,7 @@ function controls() {
   $('pause').textContent = paused ? '検出を再開' : '検出を一時停止';
   $('camera-select').disabled = starting || closed;
   $('refresh').disabled = starting || closed;
+  for (const id of ['retry-model', 'mirror', 'show-landmarks', 'capture-ratio', 'enter-capture']) $(id).disabled = closed;
   $('effect-select').disabled = closed;
   $('inference-rate').disabled = closed;
   $('preview-effect').disabled = closed;
@@ -255,6 +256,7 @@ function modelFailed(detail) {
   clearOverlay(); controls(); diagnostics();
 }
 function initModel() {
+  if (closed) return;
   invalidateInference(true);
   stopScene();
   clearTimeout(modelTimer); clearTimeout(workerTimer); worker?.terminate();
@@ -517,12 +519,12 @@ $('quit').onclick = async () => {
   stopCamera(); worker?.terminate(); clearInterval(heartbeat); clearTimeout(modelTimer); clearTimeout(workerTimer);
   background.clear(); $('background-file').value = '';
   fingerMask.media.clear(); $('mask-file').value = '';
-  closed = true; controls(); $('quit').disabled = true;
+  closed = true; sfx.dispose(); controls(); $('quit').disabled = true;
   message('終了しています…');
   try { await serverPost('/api/quit'); message('終了しました。このタブを閉じてください。'); }
   catch { message('カメラは停止しました。このタブを閉じてください。ローカルサーバーは無操作で自動終了します。'); }
 };
-window.addEventListener('pagehide', () => { stopCamera(); background.clear(); fingerMask.media.clear(); worker?.terminate(); clearInterval(heartbeat); });
+window.addEventListener('pagehide', () => { sfx.dispose(); stopCamera(); background.clear(); fingerMask.media.clear(); worker?.terminate(); clearInterval(heartbeat); });
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 document.addEventListener('visibilitychange', () => {
   invalidateInference(); clearOverlay();

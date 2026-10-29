@@ -4,18 +4,26 @@ const PENTATONIC = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
 const frequency = semitones => 523.25 * Math.pow(2, semitones / 12);
 
 export class Sfx {
-  constructor() { this.enabled = true; this.context = null; }
+  constructor() { this.enabled = true; this.context = null; this.disposed = false; }
 
   // Browsers only start audio after a user gesture, so create it from one.
   unlock() {
-    if (!this.enabled) return;
+    if (!this.enabled || this.disposed) return;
     try {
       this.context ??= new (window.AudioContext || window.webkitAudioContext)();
       if (this.context.state === 'suspended') this.context.resume().catch(() => {});
     } catch { this.context = null; }
   }
 
-  get ready() { return this.enabled && this.context !== null && this.context.state === 'running'; }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    const context = this.context;
+    this.context = null;
+    if (context) void context.close().catch(() => {});
+  }
+
+  get ready() { return !this.disposed && this.enabled && this.context !== null && this.context.state === 'running'; }
 
   tone(freq, start, duration, type, volume, slideTo) {
     const { context } = this;
