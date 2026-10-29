@@ -73,6 +73,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(headers['Content-type'], 'application/wasm')
         self.assertEqual(body, b'')
 
+    def test_windows_paths_are_rejected_before_filesystem_resolution(self):
+        paths = ('/%5c%5cattacker.invalid%5cshare%5cfile', '/C%3a/Windows/win.ini',
+                 '/%5c%5c%3f%5cC%3a/Windows/win.ini', '/file%3astream',
+                 '/%00.txt', '/%2e%2e/secret.txt', '/./index.html')
+        with patch.object(app.Path, 'resolve') as resolve:
+            for method in ('GET', 'HEAD'):
+                for path in paths:
+                    with self.subTest(method=method, path=path):
+                        self.assertEqual(self.request(path, method)[0], 404)
+            resolve.assert_not_called()
+
+    def test_static_file_is_decoded_once_and_the_validated_file_is_served(self):
+        (self.server.root / 'literal%2etxt').write_text('literal percent', encoding='utf-8')
+        status, _, body = self.request('/literal%252etxt')
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b'literal percent')
+
     def test_heartbeat_requires_session_and_origin(self):
         self.assertEqual(self.request('/api/heartbeat', 'POST')[0], 403)
         self.assertEqual(self.request('/api/heartbeat', 'POST', {'Origin': self.server.origin})[0], 403)

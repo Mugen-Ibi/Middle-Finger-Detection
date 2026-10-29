@@ -26,7 +26,7 @@ export function* generateSamples(seed = 20261023, variants = 256) {
       const scale = 0.5 + random() * 1.5, mirror = random() > 0.5 ? 1 : -1;
       const offset = { x: random() - 0.5, y: random() - 0.5, z: random() - 0.5 };
       const world = points.map(p => {
-        const x = p.x * Math.cos(yaw), z = p.x * Math.sin(yaw) + p.z;
+        const x = p.x * Math.cos(yaw) - p.z * Math.sin(yaw), z = p.x * Math.sin(yaw) + p.z * Math.cos(yaw);
         return {
           x: (x * Math.cos(rotation) - p.y * Math.sin(rotation)) * scale * mirror + offset.x + (random() - 0.5) * 0.0007 * scale,
           y: (x * Math.sin(rotation) + p.y * Math.cos(rotation)) * scale + offset.y + (random() - 0.5) * 0.0007 * scale,
@@ -35,7 +35,7 @@ export function* generateSamples(seed = 20261023, variants = 256) {
       });
       const aspectRatio = [4 / 3, 16 / 9, 9 / 16, 1][variant % 4];
       const image = world.map(p => ({ x: 0.5 + (p.x - offset.x) / aspectRatio, y: 0.6 + p.y - offset.y, z: p.z - offset.z }));
-      yield { id: `${seed}-${pose}-${variant}`, source: 'procedural-v1', label, world, image, aspectRatio };
+      yield { id: `${seed}-${pose}-${variant}`, source: 'procedural-v2', label, world, image, aspectRatio };
     }
   }
 }

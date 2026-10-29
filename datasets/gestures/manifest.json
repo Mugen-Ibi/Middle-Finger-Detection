@@ -35,10 +35,19 @@
   "publicVariants": 120,
   "synthetic": {
     "generator": "generate.mjs",
+    "version": "procedural-v2",
     "developmentSeed": 20261023,
     "evaluationSeed": 421337,
     "variantsPerPose": 256,
     "poses": 20
+  },
+  "robustness": {
+    "generator": "robustness.mjs",
+    "developmentSeed": 20261029,
+    "evaluationSeed": 7391337,
+    "variantsPerPose": 128,
+    "poses": 22,
+    "description": "Independent PIP/DIP flexion, relaxed middle finger, ambiguous/negative poses, full rigid 3D rotation, equal mirrored/unmirrored variants."
   },
   "limitations": [
     "Five source photos only; augmented variants are not independent people.",

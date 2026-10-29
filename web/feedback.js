@@ -59,7 +59,11 @@ export class Sfx {
         this.noise(t + 0.12, 0.25, 0.14);
       }
       const notes = 3 + Math.min(combo, 6) + (max ? 4 : 0);
-      for (let i = 0; i < notes; i++) this.tone(frequency(PENTATONIC[i]), t + 0.04 + i * 0.055, 0.2, i % 2 ? 'triangle' : 'square', 0.08);
+      for (let i = 0; i < notes; i++) {
+        const cycle = PENTATONIC.length - 1; // The final note repeats the next cycle's root.
+        const note = PENTATONIC[i % cycle] + 24 * Math.floor(i / cycle);
+        this.tone(frequency(note), t + 0.04 + i * 0.055, 0.2, i % 2 ? 'triangle' : 'square', 0.08);
+      }
     });
   }
 

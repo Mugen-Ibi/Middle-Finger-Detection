@@ -8,9 +8,9 @@ export const messages = [
   ['LEVEL UP!', '自己主張レベルが上がった。'],
   ['STAY BOLD.', 'その勢いで、いこう。'],
 ];
-// "Random" cycles through these four. Rainbow and "all" are chosen explicitly.
+// "Random" cycles through these four. Other effects are selected explicitly.
 const effects = ['confetti', 'stars', 'fireworks', 'rings'];
-const extraEffects = ['rainbow', 'all'];
+const extraEffects = ['rainbow', 'all', 'duet'];
 export const effectNames = [...effects, ...extraEffects];
 const palettes = {
   confetti: ['#ff2e93', '#27f0ff', '#ffe534', '#b6ff3d', '#ffffff'],
@@ -61,11 +61,11 @@ export class Celebration {
   }
 
   // intensity: 1 to 5. combo adds a few more particles per chained gesture.
-  play({ effect = 'random', mode = 'random', preset = 0, title = '', subtitle = '', preview = false, intensity = 3, combo = 1, max = false } = {}) {
+  play({ effect = 'random', mode = 'random', preset = 0, title = '', subtitle = '', preview = false, intensity = 3, combo = 1, max = false, gesture = null } = {}) {
     this.stop();
     this.effect = effectNames.includes(effect) ? effect : this.nextEffect();
-    // Maximum Dopamine Mode always plays every effect, in three waves.
-    if (max) this.effect = 'all';
+    // Maximum mode uses three waves, preserving the dedicated two-hand effect.
+    if (max && this.effect !== 'duet') this.effect = 'all';
     let text;
     if (mode === 'custom') text = [title.trim().slice(0, 60) || 'GESTURE DETECTED!', subtitle.trim().slice(0, 100)];
     else if (mode === 'preset') text = messages[preset] || messages[0];
@@ -75,6 +75,7 @@ export class Celebration {
     this.banner.dataset.max = max ? 'true' : 'false';
     this.banner.dataset.combo = combo >= 10 ? 'max' : combo >= 5 ? 'high' : combo >= 2 ? 'chain' : 'none';
     this.banner.querySelector('span').textContent = preview ? 'EFFECT PREVIEW'
+      : gesture === 'double_middle_finger' ? 'DOUBLE MIDDLE FINGER'
       : max ? (combo >= 2 ? `MAX DOPAMINE ×${combo}` : 'MAX DOPAMINE')
       : combo >= 2 ? `COMBO ×${combo}` : 'GESTURE DETECTED';
     this.banner.querySelector('strong').textContent = text[0];
@@ -131,7 +132,8 @@ export class Celebration {
     for (const layer of this.layers) {
       const time = elapsed - layer.delay;
       if (time < 0) continue;
-      if (layer.name === 'rings') this.drawRings(ctx, layer, time, width, height, unit, fade);
+      if (layer.name === 'duet') this.drawDuet(ctx, layer, time, width, height, unit, fade);
+      else if (layer.name === 'rings') this.drawRings(ctx, layer, time, width, height, unit, fade);
       else if (layer.name === 'rainbow') this.drawRainbow(ctx, layer, time, width, height, unit, fade);
       else this.drawParticles(ctx, layer, time, width, height, unit, fade);
     }
@@ -149,6 +151,31 @@ export class Celebration {
       ctx.lineWidth = Math.max(2, 9 - age * 3);
       ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 18;
       ctx.beginPath(); ctx.arc(width / 2, height / 2, (0.08 + age * 0.4) * unit, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Two opposing neon bursts meet in the center; separate from the single-hand effects.
+  drawDuet(ctx, layer, elapsed, width, height, unit, fade) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (const [side, color] of [[-1, '#27f0ff'], [1, '#ff2e93']]) {
+      const cx = width * (0.5 + side * 0.24), cy = height * 0.48;
+      ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 16;
+      for (let i = 0; i < layer.rings; i++) {
+        const age = elapsed - i * 0.18;
+        if (age < 0) continue;
+        ctx.globalAlpha = Math.max(0, 1 - age / 1.8) * fade;
+        ctx.lineWidth = Math.max(2, 6 - age * 2);
+        ctx.beginPath(); ctx.arc(cx, cy, (0.03 + age * 0.32) * unit, 0, Math.PI * 2); ctx.stroke();
+      }
+      for (const p of layer.particles) {
+        const radius = elapsed * (0.15 + p.speed) * unit;
+        ctx.globalAlpha = Math.max(0, 1 - elapsed / 2.6) * fade;
+        ctx.fillStyle = color;
+        const x = cx + Math.cos(p.angle) * radius - side * elapsed * width * 0.06;
+        const y = cy + Math.sin(p.angle) * radius + elapsed * elapsed * unit * 0.035;
+        ctx.beginPath(); ctx.arc(x, y, p.size * 0.45, 0, Math.PI * 2); ctx.fill();
+      }
     }
     ctx.restore();
   }

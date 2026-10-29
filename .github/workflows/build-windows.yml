@@ -34,6 +34,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: JavaScript unit tests
         run: npm test
+      - name: Gesture regression evaluation
+        run: npm run evaluate:gestures
       - name: Browser integration tests
         run: npm run test:e2e
       - name: Build executable

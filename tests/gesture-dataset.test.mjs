@@ -1,10 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateSamples } from '../datasets/gestures/generate.mjs';
+import { generateRobustnessSamples } from '../datasets/gestures/robustness.mjs';
 import { classifyGesture, GestureGate } from '../web/gesture.js';
 
 test('5120 seeded evaluation poses: classes, negative poses, handedness, rotation, noise and aspect ratios', () => {
   for (const s of generateSamples(421337)) assert.equal(classifyGesture(s.world, s.image, s.aspectRatio), s.label, s.id);
+});
+
+test('2816 kinematic evaluation poses cover both hand sides, independent joint bends and full 3D rotation', () => {
+  const counts = { mirrored: 0, unmirrored: 0 };
+  const combinations = new Map();
+  for (const s of generateRobustnessSamples(7391337)) {
+    assert.equal(classifyGesture(s.world, s.image, s.aspectRatio), s.label, s.id);
+    counts[s.mirrored ? 'mirrored' : 'unmirrored']++;
+    const key = `${s.pose}/${s.aspectRatio}`;
+    if (!combinations.has(key)) combinations.set(key, new Set());
+    combinations.get(key).add(s.mirrored);
+  }
+  assert.deepEqual(counts, { mirrored: 1408, unmirrored: 1408 });
+  assert.equal(combinations.size, 22 * 4);
+  for (const [key, sides] of combinations) assert.equal(sides.size, 2, key);
 });
 test('invalid/sparse/degenerate data fail closed', () => {
   for (const points of [null, [], new Array(21), Array(21).fill({ x: 0, y: 0, z: 0 }), Array(21).fill({ x: NaN, y: 0, z: 0 })]) {

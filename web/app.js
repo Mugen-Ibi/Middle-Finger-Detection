@@ -1,5 +1,5 @@
 import { CameraController, cameraError, isDarkRGBA } from './camera.js';
-import { GestureGate, classifyGesture, GESTURE_LABELS } from './gesture.js';
+import { GestureGate, classifyGesture, resolveGesture, GESTURE_LABELS } from './gesture.js';
 import { Celebration, messages } from './celebration.js';
 import { Progress, BADGES } from './progress.js';
 import { Sfx, Impact } from './feedback.js';
@@ -52,7 +52,7 @@ function diagnostics() {
   const summary = metrics.summary();
   const times = value => value.median === null ? '— ms' : `${Math.round(value.median)} / ${Math.round(value.p95)} ms`;
   $('diagnostics').textContent = [
-    'Gesture Party 2.0.0-beta.9 / Browser Camera API / Canvas Preview',
+    'Gesture Party 2.0.0-beta.10 / Browser Camera API / Canvas Preview',
     `ブラウザー: ${navigator.userAgent}`,
     `カメラ: ${cameraName || '未接続'}`,
     `映像: ${active ? `${video.videoWidth} × ${video.videoHeight}` : '停止中'}`,
@@ -250,6 +250,7 @@ function modelFailed(detail) {
   modelStatus = '読み込み失敗'; $('model-state').textContent = modelStatus;
   $('retry-model').hidden = false;
   $('hand-state').textContent = '検出できません';
+  $('gesture-state').textContent = '待機中';
   lastError = `Model: ${detail}`;
   clearOverlay(); controls(); diagnostics();
 }
@@ -288,14 +289,22 @@ function initModel() {
           const matching = gestures.map(gesture => gesture === 'middle_finger');
           const candidates = [...new Set(gestures.filter(Boolean))];
           // Conflicting gestures from two hands are ambiguous; neither wins by array order.
-          const detected = candidates.length === 1 ? candidates[0] : null;
+          const detected = resolveGesture(gestures);
           fingerMask.update(data.landmarks.filter((_, i) => matching[i]), video.videoWidth, video.videoHeight, request.timestamp);
           $('gesture-state').textContent = detected ? `${GESTURE_LABELS[detected]}を検出` : candidates.length > 1 ? 'ポーズを1種類に揃えてください' : '待機中';
           if (gate.update(detected, request.timestamp)) { poseActive = true; celebrate(detected); }
+          // Restore a held background after fresh tracking returns, without scoring again.
+          if (!gate.armed && detected) poseActive = true;
           if (gate.armed) poseActive = false;
           syncBackground();
           clearTimeout(poseWatchdog);
-          poseWatchdog = setTimeout(() => { gate.reset(); poseActive = false; syncBackground(); }, 1200);
+          poseWatchdog = setTimeout(() => {
+            poseWatchdog = null;
+            poseActive = false; syncBackground();
+            clearOverlay();
+            $('hand-state').textContent = '認識結果を待っています';
+            $('gesture-state').textContent = '待機中';
+          }, Math.max(1, MAX_RESULT_AGE_MS - age));
         } finally { finishFrame(request); }
       }
     };
@@ -323,11 +332,16 @@ function drawLandmarks(hands) {
 function celebrate(gesture) {
   partyCount++; $('count').textContent = String(partyCount).padStart(2, '0');
   const options = partyOptions();
-  if (options.mode === 'random' && gesture && gesture !== 'middle_finger') {
+  if (gesture === 'double_middle_finger') {
+    options.effect = 'duet';
+    if (options.mode === 'random') Object.assign(options, {
+      mode: 'custom', title: 'DOUBLE IMPACT!', subtitle: '両手の中指を同時に検出！',
+    });
+  } else if (options.mode === 'random' && gesture && gesture !== 'middle_finger') {
     Object.assign(options, { mode: 'custom', title: GESTURE_LABELS[gesture], subtitle: 'ジェスチャーを検出しました' });
   }
   const result = progress.record(performance.now(), { allEffects: options.effect === 'all' || options.max, max: options.max });
-  party.play({ ...options, combo: result.combo });
+  party.play({ ...options, gesture, combo: result.combo });
   impact.hit(Math.min(5, options.intensity + (result.combo >= 5 ? 1 : 0)), { max: options.max });
   sfx.hit(result.combo, { max: options.max });
   renderProgress();
@@ -494,6 +508,7 @@ $('copy-diagnostics').onclick = async () => {
 };
 
 async function serverPost(path) {
+  if (!sessionToken) await sessionReady;
   if (!sessionToken) throw new Error('Local server session unavailable');
   const response = await fetch(path, { method: 'POST', headers: { 'X-Session-Token': sessionToken } });
   if (!response.ok) throw new Error(`Local server: ${response.status}`);
@@ -503,6 +518,7 @@ $('quit').onclick = async () => {
   background.clear(); $('background-file').value = '';
   fingerMask.media.clear(); $('mask-file').value = '';
   closed = true; controls(); $('quit').disabled = true;
+  message('終了しています…');
   try { await serverPost('/api/quit'); message('終了しました。このタブを閉じてください。'); }
   catch { message('カメラは停止しました。このタブを閉じてください。ローカルサーバーは無操作で自動終了します。'); }
 };
@@ -527,9 +543,15 @@ if (isFirefox) message('Firefox は対応対象外です。このページの UR
 else if (!supportsCamera) message('このブラウザーは対応していません。最新の Microsoft Edge または Google Chrome で開いてください。', 'error');
 else refreshDevices().catch(error => message(cameraError(error), 'error'));
 controls(); initModel(); diagnostics();
-fetch('/api/session').then(r => r.json()).then(data => {
+const sessionReady = fetch('/api/session', { signal: AbortSignal.timeout(10000) }).then(r => {
+  if (!r.ok) throw new Error(`Local server: ${r.status}`);
+  return r.json();
+}).then(data => {
   sessionToken = data.token;
+  if (closed) return;
   heartbeat = setInterval(() => serverPost('/api/heartbeat').catch(() => {
-    message('ローカルサーバーとの接続が切れました。アプリを起動し直してください。', 'error');
+    if (!closed) message('ローカルサーバーとの接続が切れました。アプリを起動し直してください。', 'error');
   }), 15000);
-}).catch(() => message('ローカルサーバーに接続できません。exe または起動スクリプトから開いてください。', 'error'));
+}).catch(() => {
+  if (!closed) message('ローカルサーバーに接続できません。exe または起動スクリプトから開いてください。', 'error');
+});

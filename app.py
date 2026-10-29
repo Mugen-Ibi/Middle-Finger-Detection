@@ -71,19 +71,34 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def static_path(self):
-        path = unquote(urlsplit(self.path).path)
+        try:
+            parsed = urlsplit(self.path)
+        except ValueError:
+            return None
+        path = unquote(parsed.path)
+        # Reject Windows UNC/drive/device paths before filesystem resolution.
+        # resolve() itself may access a remote share, even if containment fails.
+        if (parsed.scheme or parsed.netloc or not path.startswith("/")
+                or any(char in path for char in ("\\", ":", "\x00"))
+                or any(part in (".", "..") for part in path.split("/"))):
+            return None
         if path == "/":
             path = "/index.html"
         target = (self.server.root / path.lstrip("/")).resolve()
         if not target.is_relative_to(self.server.root) or not target.is_file():
             return None
-        return path
+        return target
+
+    def translate_path(self, path):
+        # Serve exactly the file validated above; SimpleHTTPRequestHandler's
+        # default translation would otherwise URL-decode a second time.
+        return str(self.static_file)
 
     def do_GET(self):
         if not self.valid_host():
             self.send_error(403)
             return
-        if urlsplit(self.path).path == "/api/session":
+        if self.path.split("?", 1)[0] == "/api/session":
             self.server.last_seen = time.monotonic()
             self.send_json({"app": APP_ID, "token": self.server.token})
             return
@@ -91,7 +106,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path is None:
             self.send_error(404)
             return
-        self.path = path
+        self.static_file = path
         super().do_GET()
 
     def do_HEAD(self):
@@ -102,7 +117,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path is None:
             self.send_error(404)
             return
-        self.path = path
+        self.static_file = path
         super().do_HEAD()
 
     def do_POST(self):

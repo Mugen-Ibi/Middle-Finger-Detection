@@ -2,8 +2,9 @@ import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 
 let browser, server, url;
@@ -337,6 +338,10 @@ async function mockGestures(context) {
       postMessage(data) {
         if (data.type === 'init') { queueMicrotask(() => this.onmessage?.({ data: { type: 'ready' } })); return; }
         data.frame.close();
+        if (window.failInference) {
+          queueMicrotask(() => this.onmessage?.({ data: { type: 'error', message: 'test inference failure' } }));
+          return;
+        }
         (window.submissions ??= []).push({ id: data.id, epoch: data.epoch, timestamp: data.timestamp });
         const points = Array.from({ length: 21 }, () => ({ x: 0, y: 0, z: 0 }));
         for (const base of [5, 9, 13, 17]) {
@@ -1037,5 +1042,227 @@ test('two conflicting gestures do not trigger until both hands agree', async t =
   await page.evaluate(() => { window.testPoses[1] = window.testPoses[0]; });
   await waitText(page, 'count', '01');
   await waitText(page, 'gesture-state', 'いいね！');
+  await page.locator('#stop').click();
+});
+
+test('relaxed right and left hands both trigger with mirror display on or off', async t => {
+  const { generateRobustnessSamples } = await import('../../datasets/gestures/robustness.mjs');
+  const poses = [...generateRobustnessSamples(7391337, 2)].filter(s => s.pose === 'relaxed-middle');
+  const page = await pageFor(t, mockGestures);
+  await start(page);
+  let count = 0;
+  for (const mirror of [true, false]) for (const pose of poses) {
+    await page.locator('#mirror').setChecked(mirror);
+    await page.evaluate(pose => { window.testPose = pose; window.raised = true; }, pose);
+    await waitText(page, 'count', String(++count).padStart(2, '0'));
+    await waitText(page, 'gesture-state', '中指を検出');
+    await page.evaluate(() => { window.raised = false; });
+    await page.waitForTimeout(650);
+  }
+  await page.locator('#stop').click();
+});
+
+test('simultaneous middle fingers draw the dedicated twin burst and masks once, then clear on stop', async t => {
+  for (const viewport of [{ width: 1440, height: 1050 }, { width: 390, height: 844 }]) {
+    const page = await pageFor(t, mockGestures);
+    await page.setViewportSize(viewport);
+    assert.equal(new URL(page.url()).origin, url);
+    assert.match(await page.title(), /Gesture Party/);
+    assert.ok(await page.locator('h1').textContent());
+    const consoleErrors = [];
+    page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+    await page.locator('#effect-select').selectOption('stars');
+    await page.locator('#mask-mode').selectOption('stamp');
+    await start(page);
+    await page.locator('#stage').scrollIntoViewIfNeeded();
+    const capture = process.env.GESTURE_QA_DIR ? await page.context().newCDPSession(page) : null;
+    const clip = capture ? await page.locator('#stage').evaluate(element => {
+      const { x, y, width, height } = element.getBoundingClientRect();
+      return { x: x + scrollX, y: y + scrollY, width, height, scale: 1 };
+    }) : null;
+    await page.evaluate(() => { window.raised = true; window.secondHand = true; });
+    await waitText(page, 'count', '01');
+    // Observe short-lived pixels before additional UI round trips can consume
+    // the three-second lifetime, especially on a slow Windows test host.
+    await page.waitForFunction(() => {
+      const canvas = document.getElementById('confetti');
+      const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      let cyan = false, pink = false;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i + 3] < 50) continue;
+        cyan ||= pixels[i + 1] > pixels[i] + 80 && pixels[i + 2] > pixels[i] + 80;
+        pink ||= pixels[i] > pixels[i + 1] + 80 && pixels[i + 2] > pixels[i + 1] + 40;
+        if (cyan && pink) return true;
+      }
+      return false;
+    });
+    if (capture) {
+      await mkdir(process.env.GESTURE_QA_DIR, { recursive: true });
+      // Capture this transient frame immediately, without waiting for animated
+      // descendants or font loading until after the three-second effect expires.
+      const { data } = await capture.send('Page.captureScreenshot', { format: 'png', clip });
+      const name = viewport.width === 390 ? 'double-impact-mobile.png' : 'double-impact-desktop.png';
+      await writeFile(join(process.env.GESTURE_QA_DIR, name), Buffer.from(data, 'base64'));
+      await capture.detach();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    const banner = await page.locator('#celebration').evaluate(element => ({
+      effect: element.dataset.effect, title: element.querySelector('strong').textContent,
+      label: element.querySelector('span').textContent,
+    }));
+    assert.deepEqual(banner, { effect: 'duet', title: 'DOUBLE IMPACT!', label: 'DOUBLE MIDDLE FINGER' });
+    await waitText(page, 'gesture-state', '両手の中指');
+    assert.equal((await maskPixel(page, 0.7, 0.46))[3], 255);
+    assert.equal((await maskPixel(page, 0.3, 0.46))[3], 255);
+    await page.waitForTimeout(650);
+    assert.equal(await page.locator('#count').textContent(), '01');
+    assert.equal(await page.locator('#score-num').textContent(), '100');
+    await page.locator('#stop').click();
+    assert.equal(await page.locator('#celebration').isVisible(), false);
+    assert.equal(await page.locator('#finger-mask').isVisible(), false);
+    assert.equal(await page.locator('#confetti').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+    assert.deepEqual(consoleErrors, []);
+  }
+});
+
+test('adding a second hand upgrades once, tracking changes cannot retrigger, full release rearms', async t => {
+  const page = await pageFor(t, mockGestures);
+  await chooseBackground(page, await backgroundFile(page));
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  await page.evaluate(() => { window.secondHand = true; });
+  await waitText(page, 'count', '02');
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'duet');
+  await page.evaluate(() => { window.secondHand = false; });
+  await waitText(page, 'gesture-state', '中指を検出');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { window.secondHand = true; });
+  await waitText(page, 'gesture-state', '両手の中指');
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#count').textContent(), '02');
+  await page.evaluate(() => { window.holdResults = true; });
+  await page.waitForTimeout(1400);
+  assert.equal(await page.locator('#media-background').isVisible(), false);
+  // The watchdog can hide stale output, but only observed release can rearm.
+  await page.evaluate(() => { window.holdResults = false; window.heldResults.splice(0).forEach(deliver => deliver()); });
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#count').textContent(), '02');
+  assert.equal(await page.locator('#media-background').isVisible(), true);
+  await page.evaluate(() => { window.raised = false; });
+  await page.waitForTimeout(650);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '03');
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'duet');
+  await page.locator('#stop').click();
+});
+
+test('two-hand effect preserves custom text, maximum mode and reduced-motion preferences', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#message-mode').selectOption('custom');
+  await page.locator('#custom-title').fill('両手で成功！');
+  await page.locator('#max-toggle').check();
+  await start(page);
+  await page.evaluate(() => { window.raised = true; window.secondHand = true; });
+  await waitText(page, 'count', '01');
+  assert.equal(await page.locator('#celebration').getAttribute('data-effect'), 'duet');
+  assert.equal(await page.locator('#celebration strong').textContent(), '両手で成功！');
+  assert.equal(await page.locator('#score-num').textContent(), '200');
+  assert.equal(await page.locator('#confetti').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+  assert.equal(await page.locator('#video-stack').evaluate(element => element.getAnimations().length), 0);
+  await page.locator('#pause').click();
+  assert.equal(await page.locator('#celebration').isVisible(), false);
+  await page.locator('#stop').click();
+});
+
+test('quit waits for a pending session token and never starts a late heartbeat', async t => {
+  let pendingSession, observed;
+  const sessionObserved = new Promise(resolve => { observed = resolve; });
+  let quits = 0, heartbeats = 0;
+  const page = await pageFor(t, async context => {
+    await context.addInitScript(() => {
+      const interval = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) => interval(callback, delay === 15000 ? 50 : delay, ...args);
+    });
+    await context.route('**/api/session', route => { pendingSession = route; observed(); });
+    await context.route('**/api/quit', route => { quits++; return route.fulfill({ json: { ok: true } }); });
+    await context.route('**/api/heartbeat', route => { heartbeats++; return route.fulfill({ json: { ok: true } }); });
+  });
+  await sessionObserved;
+  await page.locator('#quit').click();
+  assert.equal(await page.locator('#quit').isDisabled(), true);
+  await pendingSession.fulfill({ json: { token: 'test-session' } });
+  await waitText(page, 'message', '終了しました');
+  await page.waitForTimeout(250);
+  assert.equal(quits, 1);
+  assert.equal(heartbeats, 0);
+});
+
+test('stale inference expires skeleton and labels, fresh tracking recovers, model failure clears the gesture', async t => {
+  const page = await pageFor(t, mockGestures);
+  await start(page);
+  await page.evaluate(() => { window.raised = true; });
+  await waitText(page, 'count', '01');
+  await page.evaluate(() => { window.resultDelay = 600; window.raised = false; });
+  await waitText(page, 'hand-state', '認識結果を待っています');
+  assert.equal(await page.locator('#gesture-state').textContent(), '待機中');
+  assert.equal(await page.locator('#landmarks').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+  await page.waitForTimeout(700);
+  assert.equal(await page.locator('#hand-state').textContent(), '認識結果を待っています');
+  await page.evaluate(() => { window.resultDelay = 0; window.raised = true; });
+  await waitText(page, 'gesture-state', '中指を検出');
+  assert.equal(await page.locator('#count').textContent(), '01');
+  await page.evaluate(() => { window.failInference = true; });
+  await waitText(page, 'model-state', '読み込み失敗');
+  assert.equal(await page.locator('#gesture-state').textContent(), '待機中');
+  assert.equal(await page.locator('#hand-state').textContent(), '検出できません');
+  assert.equal(await page.locator('#landmarks').evaluate(canvas => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.every(v => v === 0)), true);
+  await page.locator('#stop').click();
+});
+
+test('valid 300ms inference can accumulate a stable hold while old display samples expire', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.evaluate(() => { window.resultDelay = 300; window.raised = true; });
+  await start(page);
+  await waitText(page, 'count', '01');
+  await page.waitForTimeout(700);
+  assert.equal(await page.locator('#count').textContent(), '01');
+  await page.locator('#stop').click();
+});
+
+test('a heartbeat failing after quit cannot overwrite the successful exit message', async t => {
+  const pending = [];
+  let observed;
+  const heartbeatObserved = new Promise(resolve => { observed = resolve; });
+  const page = await pageFor(t, async context => {
+    await context.addInitScript(() => {
+      const interval = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) => interval(callback, delay === 15000 ? 50 : delay, ...args);
+    });
+    await context.route('**/api/heartbeat', route => { pending.push(route); observed(); });
+    await context.route('**/api/quit', route => route.fulfill({ json: { ok: true } }));
+  });
+  await heartbeatObserved;
+  await page.locator('#quit').click();
+  await waitText(page, 'message', '終了しました');
+  for (const route of pending) await route.fulfill({ status: 500, body: 'test heartbeat failure' });
+  await page.waitForTimeout(100);
+  assert.match(await page.locator('#message').textContent(), /終了しました/);
+});
+
+test('detection expiry preserves the independent three-second mask preview', async t => {
+  const page = await pageFor(t, mockGestures);
+  await page.locator('#mask-mode').selectOption('stamp');
+  await start(page);
+  await waitText(page, 'hand-state', '手を探しています');
+  await page.evaluate(() => {
+    window.holdResults = true;
+    document.getElementById('preview-effect').click();
+  });
+  await page.locator('#finger-mask').waitFor({ state: 'visible' });
+  await waitText(page, 'hand-state', '認識結果を待っています');
+  assert.equal(await page.locator('#finger-mask').isVisible(), true);
+  await page.locator('#finger-mask').waitFor({ state: 'hidden', timeout: 5000 });
   await page.locator('#stop').click();
 });

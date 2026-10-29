@@ -15,12 +15,16 @@ function valid(points) {
 function fingerStates(points) {
   return [5, 9, 13, 17].map(base => {
     const [mcp, pip, dip, tip] = points.slice(base, base + 4);
-    const length = distance(mcp, pip);
-    if (length < 1e-6) return { extended: false, curled: false };
+    const length = distance(mcp, pip), middle = distance(pip, dip), distal = distance(dip, tip);
+    if (Math.min(length, middle, distal) < 1e-6) return { extended: false, curled: false };
     const bend = angle(mcp, pip, dip);
+    const tipBend = angle(pip, dip, tip);
     const reach = distance(mcp, tip) / length;
-    return { extended: bend > 155 && angle(pip, dip, tip) > 145 && reach > 1.5,
-      curled: bend < 140 || reach < 1.3 };
+    const straightness = distance(mcp, tip) / (length + middle + distal);
+    // Distances and 3D angles are invariant to hand side, mirroring and rotation.
+    // A folded fingertip can have a straight PIP, so inspect the DIP as well.
+    return { extended: bend > 148 && tipBend > 145 && reach > 1.5 && straightness > 0.88,
+      curled: bend < 140 || tipBend < 130 || reach < 1.3 };
   });
 }
 
@@ -31,8 +35,15 @@ export function isMiddleFinger(points) {
 }
 
 export const GESTURE_LABELS = Object.freeze({
-  middle_finger: '中指', thumbs_up: 'いいね！', thumbs_down: 'Bad',
+  middle_finger: '中指', double_middle_finger: '両手の中指', thumbs_up: 'いいね！', thumbs_down: 'Bad',
 });
+
+// Use simultaneous results, never a handedness label or a previous frame's hand.
+export function resolveGesture(gestures) {
+  if (gestures.length === 2 && gestures.every(gesture => gesture === 'middle_finger')) return 'double_middle_finger';
+  const candidates = [...new Set(gestures.filter(Boolean))];
+  return candidates.length === 1 ? candidates[0] : null;
+}
 
 // Use metric world coordinates for shape, image coordinates for screen direction.
 // Horizontal mirroring does not change up/down. Reject ambiguous sideways thumbs.
@@ -56,22 +67,27 @@ export function classifyGesture(world, image, aspectRatio = 1) {
 }
 
 export class GestureGate {
-  constructor({ holdMs = 300, releaseMs = 450, maxGapMs = 600 } = {}) {
-    Object.assign(this, { holdMs, releaseMs, maxGapMs });
+  constructor({ holdMs = 300, releaseMs = 450, maxGapMs = 600, dropoutMs = 100 } = {}) {
+    Object.assign(this, { holdMs, releaseMs, maxGapMs, dropoutMs });
     this.reset();
   }
-  reset() { this.since = null; this.released = null; this.last = null; this.armed = true; this.samples = 0; this.candidate = null; }
+  reset() { this.since = null; this.released = null; this.last = null; this.armed = true; this.samples = 0; this.candidate = null; this.accepted = null; }
+  interrupt() {
+    // Missing results are not evidence that the user released the gesture.
+    this.since = null; this.released = null; this.last = null; this.samples = 0; this.candidate = null;
+  }
   update(detected, now) {
     if (this.last !== null && (now < this.last || now - this.last > this.maxGapMs)) {
-      this.since = null; this.released = null; this.samples = 0;
+      this.interrupt();
     }
     this.last = now;
     if (!detected) {
-      this.since = null; this.samples = 0;
       this.released ??= now;
-      if (now - this.released >= this.releaseMs) this.armed = true;
+      if (now - this.released > this.dropoutMs) { this.since = null; this.samples = 0; }
+      if (now - this.released >= this.releaseMs) { this.armed = true; this.accepted = null; }
       return false;
     }
+    if (this.released !== null && now - this.released > this.dropoutMs) { this.since = null; this.samples = 0; }
     this.released = null;
     // Different gesture classes must never contribute to the same stable hold.
     if (this.candidate !== detected) {
@@ -79,8 +95,12 @@ export class GestureGate {
     }
     this.since ??= now;
     this.samples++;
-    if (this.armed && this.samples >= 3 && now - this.since >= this.holdMs) {
+    // Adding the second hand upgrades once, without requiring the first to lower.
+    // Returning to one hand (or tracking flicker) cannot re-arm either effect.
+    const upgrade = this.accepted === 'middle_finger' && detected === 'double_middle_finger';
+    if ((this.armed || upgrade) && this.samples >= 3 && now - this.since >= this.holdMs) {
       this.armed = false;
+      this.accepted = detected;
       return true;
     }
     return false;
